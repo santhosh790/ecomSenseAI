@@ -653,10 +653,10 @@ def export_pdf(df):
 <style>
   @font-face {{
     font-family: 'TamilFont';
-    src: local('Tamil Sangam MN'), local('Tamil MN'), local('Lohit Tamil');
+        src: local('Noto Sans Tamil'), local('Lohit Tamil'), local('Tamil Sangam MN'), local('Tamil MN');
   }}
   body {{
-    font-family: 'Tamil Sangam MN', 'Tamil MN', 'Lohit Tamil', serif;
+        font-family: 'Noto Sans Tamil', 'Lohit Tamil', 'Tamil Sangam MN', 'Tamil MN', serif;
     margin: 40px;
     color: #111;
   }}

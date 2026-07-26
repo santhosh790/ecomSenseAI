@@ -1,2 +1,4 @@
 tesseract-ocr
 tesseract-ocr-eng
+fonts-noto-core
+fonts-lohit-taml
