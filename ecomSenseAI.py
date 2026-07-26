@@ -4,8 +4,11 @@ import fitz  # PyMuPDF
 import re
 import io
 import shutil
+import base64
+import mimetypes
 from PIL import Image, ImageOps, ImageFilter
 from datetime import date
+from pathlib import Path
 
 try:
     import pytesseract
@@ -24,7 +27,7 @@ if pytesseract is not None:
 # ============================================================
 
 st.set_page_config(
-    page_title="VegSense AI",
+    page_title="eComSense AI",
     page_icon="🥕",
     layout="wide"
 )
@@ -197,6 +200,9 @@ if "validated_items" not in st.session_state:
 if "extraction_report" not in st.session_state:
     st.session_state["extraction_report"] = {}
 
+if "print_logo_data_uri" not in st.session_state:
+    st.session_state["print_logo_data_uri"] = ""
+
 
 # ============================================================
 # DOCUMENT READERS
@@ -297,7 +303,7 @@ def normalize_material_name(name):
 
     # Remove packaging tokens that appear in table exports.
     value = re.sub(r"\bUB\b", " ", value)
-    value = re.sub(r"\b\d+X\d+(?:KG|KGS|NOS|EA)\b", " ", value)
+    value = re.sub(r"\b\d+\s*X+\s*\d+\s*(?:K+G|KGS|NOS|EA)\b", " ", value)
     value = re.sub(r"\b\d+(?:\.\d+)?\s*(?:KG|KGS|NOS|EA)\b", " ", value)
     value = re.sub(r"\s+", " ", value).strip()
 
@@ -320,24 +326,14 @@ def is_noise_line(line):
 
 def extract_row_quantity(text):
 
-    # PO style: "... 1 Kgs 90.00 90.00"
-    qty_unit_match = re.search(
-        r"\b(\d+(?:\.\d+)?)\s*(KG|KGS|G|GM|GRAMS?|NOS|EA)\b",
-        text,
-        flags=re.IGNORECASE,
-    )
+    compact = re.sub(r"\s+", " ", str(text)).strip().upper()
+    compact = re.sub(r"\b\d+\s*X+\s*\d+\s*(?:K+G|KGS|NOS|EA)\b", " ", compact)
+    compact = re.sub(r"\s+", " ", compact).strip()
 
-    if qty_unit_match:
-        qty = qty_unit_match.group(1)
-        unit = qty_unit_match.group(2).upper()
-        if unit in ["KGS", "KG"]:
-            unit = "KG"
-        return f"{qty} {unit}"
-
-    # Table style: "... KG 45 25.07.2026"
+    # Prefer table style first: "... KG 45 25.07.2026"
     unit_qty_match = re.search(
-        r"\b(KG|KGS|NOS|EA)\b\s*(\d+(?:\.\d+)?)\b",
-        text,
+        r"\b(KG|KGS|NOS|EA)\.?\b\s*(\d+(?:\.\d+)?)\b",
+        compact,
         flags=re.IGNORECASE,
     )
 
@@ -348,12 +344,28 @@ def extract_row_quantity(text):
             unit = "KG"
         return f"{qty} {unit}"
 
+    # PO style: "... 1 Kgs 90.00 90.00"
+    qty_unit_match = re.search(
+        r"\b(\d+(?:\.\d+)?)\s*(KG|KGS|G|GM|GRAMS?|NOS|EA)\.?\b",
+        compact,
+        flags=re.IGNORECASE,
+    )
+
+    if qty_unit_match:
+        qty = qty_unit_match.group(1)
+        unit = qty_unit_match.group(2).upper()
+        if unit in ["KGS", "KG"]:
+            unit = "KG"
+        return f"{qty} {unit}"
+
     return ""
 
 
 def extract_row_fields(text):
 
     compact = re.sub(r"\s+", " ", str(text)).strip()
+    compact = re.sub(r"\b\d+\s*X+\s*\d+\s*(?:K+G|KGS|NOS|EA)\b", " ", compact, flags=re.IGNORECASE)
+    compact = re.sub(r"\s+", " ", compact).strip()
 
     # PO-style line: "1 1100006 BABY CORN PEELED 1 Kgs 90.00 90.00"
     po_match = re.search(
@@ -372,7 +384,7 @@ def extract_row_fields(text):
 
     # Table-style line: "1 206558 BEANS CLUSTER_UB_1X1KG KG 1"
     table_match = re.search(
-        r"^\s*\d+\s+(?:\d+\s+)?(.+?)\s+(KG|KGS|NOS|EA)\s+(\d+(?:\.\d+)?)\b",
+        r"^\s*[\[\(\{\|_\-]*\s*\d+[\.)\]|_:\-]*\s+(?:\d+\s+)?(.+?)\s+(KG|KGS|NOS|EA)\.?\s+(\d+(?:\.\d+)?)\b",
         compact,
         flags=re.IGNORECASE,
     )
@@ -393,7 +405,8 @@ def build_row_candidates(lines):
     row_candidates = []
     current_row = ""
 
-    serial_row_pattern = r"^\s*\d+\s+"
+    # OCR may add symbols around serial numbers: "[5", "12.", "2_|"
+    serial_row_pattern = r"^\s*[\[\(\{\|_\-]*\s*\d+[\.)\]|_:\-]*\s*"
 
     for raw_line in lines:
         line = raw_line.strip()
@@ -620,8 +633,32 @@ def export_excel(df):
     return output.getvalue()
 
 
+def bytes_to_data_uri(image_bytes, file_name="logo.png"):
 
-def export_pdf(df):
+    mime_type = mimetypes.guess_type(file_name)[0] or "image/png"
+    encoded = base64.b64encode(image_bytes).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
+
+
+def get_default_logo_data_uri():
+
+    candidates = [
+        Path("assets/PKS_Logo.jpeg"),
+        Path("assets/logo.png"),
+        Path("assets/logo.jpg"),
+        Path("assets/logo.jpeg"),
+    ]
+
+    for logo_path in candidates:
+        if logo_path.exists():
+            image_bytes = logo_path.read_bytes()
+            return bytes_to_data_uri(image_bytes, logo_path.name)
+
+    return ""
+
+
+
+def export_pdf(df, logo_data_uri=""):
     from weasyprint import HTML
 
     date_str = date.today().strftime("%d-%m-%Y")
@@ -646,6 +683,14 @@ def export_pdf(df):
             "</tr>"
         )
 
+    logo_html = ""
+    if logo_data_uri:
+        logo_html = (
+            '<div class="brand-logo-wrap">'
+            f'<img class="brand-logo" src="{logo_data_uri}" alt="Company Logo" />'
+            "</div>"
+        )
+
     html_content = f"""<!DOCTYPE html>
 <html lang="ta">
 <head>
@@ -666,6 +711,15 @@ def export_pdf(df):
     margin-bottom: 4px;
     letter-spacing: 1px;
   }}
+    .brand-logo-wrap {{
+        text-align: center;
+        margin-bottom: 10px;
+    }}
+    .brand-logo {{
+        max-height: 90px;
+        max-width: 180px;
+        object-fit: contain;
+    }}
   .subtitle {{
     text-align: center;
     font-size: 13px;
@@ -707,8 +761,9 @@ def export_pdf(df):
 </style>
 </head>
 <body>
-  <h1>PKS Foods</h1>
-  <div class="subtitle">காய்கறி ஆர்டர் பட்டியல்</div>
+    {logo_html}
+  <h1>PKS Fresh</h1>
+  <div class="subtitle">காய்கறி பட்டியல்</div>
   <div class="date-line">தேதி: {date_str}</div>
   <table>
     <thead>
@@ -759,6 +814,8 @@ uploaded_file = st.file_uploader(
         "xlsx"
     ]
 )
+
+st.session_state["print_logo_data_uri"] = get_default_logo_data_uri()
 
 
 
@@ -920,6 +977,68 @@ if st.session_state["items"]:
         st.error(f"Error creating table: {e}")
         df = pd.DataFrame(columns=["Source Name", "Tamil Name", "Quantity", "Status"])
 
+    with st.expander("➕ Add Missing Vegetable", expanded=False):
+        st.caption("Pick a known English name (or use custom) to auto-map Tamil and append a new row.")
+
+        alias_options = sorted({alias.title() for alias in VEGETABLE_ALIASES.keys()})
+        alias_options.append("Custom...")
+
+        selected_alias = st.selectbox(
+            "English Name",
+            options=alias_options,
+            index=0,
+            key="manual_english_name_select",
+            help="Start typing to quickly search and pick a known alias.",
+        )
+
+        add_col_1, add_col_2 = st.columns([2, 1])
+
+        with add_col_1:
+            manual_name = ""
+            if selected_alias == "Custom...":
+                manual_name = st.text_input(
+                    "Custom English Name",
+                    placeholder="e.g. Ladies Finger, Onion Big, Brinjal",
+                    key="manual_english_name_custom",
+                )
+
+        with add_col_2:
+            manual_qty = st.text_input(
+                "Quantity",
+                placeholder="e.g. 5 KG",
+                key="manual_quantity",
+            )
+
+        if st.button("Add Row", key="add_manual_row"):
+            name_value = manual_name.strip() if selected_alias == "Custom..." else selected_alias.strip()
+
+            if not name_value:
+                st.warning("Enter an English vegetable name before adding.")
+            else:
+                canonical_name = find_canonical_vegetable_name(name_value)
+
+                if not canonical_name:
+                    normalized_name = normalize_text(name_value)
+                    if normalized_name in VEGETABLE_TAMIL_MAP:
+                        canonical_name = normalized_name
+
+                if not canonical_name:
+                    st.warning(
+                        "Vegetable name not recognized. Try a known alias such as 'Ladies Finger' or 'Coriander Leaves'."
+                    )
+                else:
+                    st.session_state["items"].append(
+                        {
+                            "Source Name": canonical_name.title(),
+                            "Tamil Name": VEGETABLE_TAMIL_MAP.get(canonical_name, ""),
+                            "Quantity": manual_qty.strip(),
+                            "Status": "Manually Added",
+                            "Confidence": "Manual",
+                        }
+                    )
+                    st.success(f"Added: {canonical_name.title()}")
+                    st.rerun()
+
 
     left_col, right_col = st.columns([1, 2])
 
@@ -998,7 +1117,8 @@ if len(
 
 
     pdf_file = export_pdf(
-        final_df
+        final_df,
+        logo_data_uri=st.session_state.get("print_logo_data_uri", ""),
     )
 
 
