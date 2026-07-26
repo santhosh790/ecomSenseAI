@@ -60,7 +60,13 @@ def read_image_text(path: Path) -> str:
     gray = ImageOps.grayscale(image)
     enhanced = ImageOps.autocontrast(gray)
     sharpened = enhanced.filter(ImageFilter.SHARPEN)
-    return pytesseract.image_to_string(sharpened)
+    try:
+        return pytesseract.image_to_string(sharpened)
+    except pytesseract.pytesseract.TesseractNotFoundError as exc:
+        raise RuntimeError(
+            "Tesseract OCR binary is missing. Install it first. "
+            "macOS: brew install tesseract"
+        ) from exc
 
 
 results = []

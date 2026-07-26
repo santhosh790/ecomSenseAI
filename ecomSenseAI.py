@@ -3,6 +3,7 @@ import pandas as pd
 import fitz  # PyMuPDF
 import re
 import io
+import shutil
 from PIL import Image, ImageOps, ImageFilter
 from datetime import date
 
@@ -10,6 +11,12 @@ try:
     import pytesseract
 except ImportError:
     pytesseract = None
+
+if pytesseract is not None:
+    # Explicitly set binary path when available (helps on hosted runtimes).
+    tesseract_binary = shutil.which("tesseract")
+    if tesseract_binary:
+        pytesseract.pytesseract.tesseract_cmd = tesseract_binary
 
 
 # ============================================================
@@ -234,7 +241,17 @@ def extract_image_text(image):
     enhanced = ImageOps.autocontrast(gray)
     sharpened = enhanced.filter(ImageFilter.SHARPEN)
 
-    text = pytesseract.image_to_string(sharpened)
+    try:
+        text = pytesseract.image_to_string(sharpened)
+    except pytesseract.pytesseract.TesseractNotFoundError:
+        return (
+            "",
+            "Tesseract OCR binary is not installed on this system. "
+            "For Streamlit Cloud, add a packages.txt with 'tesseract-ocr'. "
+            "For macOS, run: brew install tesseract",
+        )
+    except pytesseract.pytesseract.TesseractError as err:
+        return "", f"OCR failed: {err}"
 
     if not text.strip():
         return "", "No text detected in image. Try a clearer image or higher resolution scan."
