@@ -7,13 +7,20 @@ import shutil
 import base64
 import mimetypes
 from PIL import Image, ImageOps, ImageFilter
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 try:
     import pytesseract
 except ImportError:
     pytesseract = None
+
+try:
+    import gspread
+    from google.oauth2.service_account import Credentials
+except ImportError:
+    gspread = None
+    Credentials = None
 
 if pytesseract is not None:
     # Explicitly set binary path when available (helps on hosted runtimes).
@@ -102,6 +109,7 @@ VEGETABLE_ALIASES = {
     "BROCCOLI": "BROCCOLI",
     "CABBAGE GREEN": "CABBAGE",
     "CABBAGE": "CABBAGE",
+    "CABAGE": "CABBAGE",
     "CAPSICUM GREEN": "CAPSICUM",
     "CAPSICUM": "CAPSICUM",
     "CARROT": "CARROT",
@@ -110,11 +118,17 @@ VEGETABLE_ALIASES = {
     "COCONUT RAW NOS": "COCONUT",
     "COCONUT FRESH": "COCONUT",
     "COCONUT": "COCONUT",
+    "COCOUNT": "COCONUT",
+    "RAW COCOUNT": "COCONUT",
     "CORIANDER FRESH": "CORIANDER",
     "CORIANDER LEAVES": "CORIANDER",
     "CORIANDER": "CORIANDER",
+    "CORINDER": "CORIANDER",
+    "CORINDER FRESH": "CORIANDER",
     "CUCUMBER": "CUCUMBER",
     "CURRY LEAVES": "CURRY LEAVES",
+    "CURYLEAVE": "CURRY LEAVES",
+    "CURYLEAVES": "CURRY LEAVES",
     "DRUM STICK": "DRUMSTICK",
     "DRUMSTICK": "DRUMSTICK",
     "GARLIC BOLD": "GARLIC",
@@ -150,6 +164,7 @@ VEGETABLE_ALIASES = {
     "PINEAPPLE": "PINEAPPLE",
     "POTATO LARGE": "POTATO",
     "POTATO": "POTATO",
+    "POTOTO": "POTATO",
     "PUMPKIN RED": "PUMPKIN RED",
     "PUMPKIN WHITE": "PUMPKIN WHITE",
     "WHITE PUMPKIN": "PUMPKIN WHITE",
@@ -202,6 +217,27 @@ if "extraction_report" not in st.session_state:
 
 if "print_logo_data_uri" not in st.session_state:
     st.session_state["print_logo_data_uri"] = ""
+
+if "push_gsheet_on_confirm" not in st.session_state:
+    st.session_state["push_gsheet_on_confirm"] = False
+
+if "active_source_file" not in st.session_state:
+    st.session_state["active_source_file"] = ""
+
+if "active_upload_type" not in st.session_state:
+    st.session_state["active_upload_type"] = ""
+
+if "active_uploaded_image_path" not in st.session_state:
+    st.session_state["active_uploaded_image_path"] = ""
+
+if "download_header_text" not in st.session_state:
+    st.session_state["download_header_text"] = "PKS Fresh"
+
+if "download_above_list_text" not in st.session_state:
+    st.session_state["download_above_list_text"] = "காய்கறி பட்டியல்"
+
+if "download_footer_text" not in st.session_state:
+    st.session_state["download_footer_text"] = ""
 
 
 # ============================================================
@@ -397,6 +433,21 @@ def extract_row_fields(text):
             unit = "KG"
         return material, f"{qty} {unit}"
 
+    # Free-form line: "Onion 80kg" or "Raw cocount 15nos"
+    freeform_match = re.search(
+        r"^\s*(.+?)\s+(\d+(?:\.\d+)?)\s*(KG|KGS|NOS|EA)\.?\s*$",
+        compact,
+        flags=re.IGNORECASE,
+    )
+
+    if freeform_match:
+        material = freeform_match.group(1).strip()
+        qty = freeform_match.group(2)
+        unit = freeform_match.group(3).upper()
+        if unit in ["KG", "KGS"]:
+            unit = "KG"
+        return material, f"{qty} {unit}"
+
     return "", ""
 
 
@@ -422,6 +473,9 @@ def build_row_candidates(lines):
             # Join wrapped line fragments (common in PDFs/ocr tables).
             if current_row:
                 current_row = f"{current_row} {line}"
+            else:
+                # Free-form lists may have one item per line without serial numbers.
+                row_candidates.append(line)
 
     if current_row:
         row_candidates.append(current_row)
@@ -614,20 +668,82 @@ def consolidate(df):
 # ============================================================
 
 
-def export_excel(df):
+def export_excel(
+    df,
+    logo_path="",
+    header_text="PKS Fresh",
+    above_list_text="காய்கறி பட்டியல்",
+    footer_text="",
+):
+
+    from openpyxl.drawing.image import Image as XLImage
+    from openpyxl.styles import Font
+    from openpyxl.styles import Alignment
 
     output = io.BytesIO()
+    date_str = date.today().strftime("%d-%m-%Y")
+    tamil_font_name = "Nirmala UI"
+    export_df = df.copy()
+
+    # Keep an extra blank column in downloaded list.
+    if " " not in export_df.columns:
+        export_df[" "] = ""
+
+    date_line_text = f"தேதி: {date_str}"
+    if str(above_list_text or "").strip():
+        date_line_text = f"{date_line_text}    |    {str(above_list_text)}"
 
     with pd.ExcelWriter(
         output,
         engine="openpyxl"
     ) as writer:
 
-        df.to_excel(
+        export_df.to_excel(
             writer,
             index=False,
-            sheet_name="Vegetables"
+            sheet_name="Vegetables",
+            startrow=6,
         )
+
+        ws = writer.sheets["Vegetables"]
+
+        ws["A1"] = str(header_text or "")
+        ws["A3"] = date_line_text
+
+        ws["A1"].font = Font(size=18, bold=True)
+        ws["A3"].font = Font(name=tamil_font_name, size=13)
+
+        ws["A1"].alignment = Alignment(horizontal="left")
+        ws["A3"].alignment = Alignment(horizontal="left")
+
+        ws.column_dimensions["A"].width = 36
+        ws.column_dimensions["B"].width = 10
+        ws.column_dimensions["C"].width = 12
+        ws.column_dimensions["D"].width = 14
+        ws.row_dimensions[3].height = 24
+
+        header_row = 7
+        ws[f"A{header_row}"].font = Font(size=12, bold=True)
+        ws[f"B{header_row}"].font = Font(size=12, bold=True)
+        ws[f"C{header_row}"].font = Font(size=12, bold=True)
+        ws[f"D{header_row}"].font = Font(size=12, bold=True)
+
+        for row_idx in range(header_row + 1, header_row + 1 + len(export_df)):
+            ws[f"A{row_idx}"].font = Font(name=tamil_font_name, size=14)
+            ws[f"A{row_idx}"].alignment = Alignment(wrap_text=True)
+            ws.row_dimensions[row_idx].height = 24
+
+        if str(footer_text or "").strip():
+            footer_row = header_row + 2 + len(export_df)
+            ws[f"A{footer_row}"] = str(footer_text)
+            ws[f"A{footer_row}"].font = Font(name=tamil_font_name, size=12, bold=True)
+            ws[f"A{footer_row}"].alignment = Alignment(horizontal="left", wrap_text=True)
+
+        if logo_path and Path(logo_path).exists():
+            logo_img = XLImage(str(logo_path))
+            logo_img.height = 85
+            logo_img.width = 150
+            ws.add_image(logo_img, "D1")
 
 
     return output.getvalue()
@@ -657,8 +773,227 @@ def get_default_logo_data_uri():
     return ""
 
 
+def get_default_logo_path():
 
-def export_pdf(df, logo_data_uri=""):
+    candidates = [
+        Path("assets/PKS_Logo.jpeg"),
+        Path("assets/logo.png"),
+        Path("assets/logo.jpg"),
+        Path("assets/logo.jpeg"),
+    ]
+
+    for logo_path in candidates:
+        if logo_path.exists():
+            return str(logo_path)
+
+    return ""
+
+
+def push_validated_items_to_google_sheet(df):
+
+    if df is None or len(df) == 0:
+        return False, "No validated rows to push."
+
+    if gspread is None or Credentials is None:
+        return False, "Google Sheets libraries are not installed. Add gspread and google-auth dependencies."
+
+    sheet_cfg = st.secrets.get("google_sheet", {})
+    spreadsheet_id = sheet_cfg.get("spreadsheet_id", st.secrets.get("GOOGLE_SHEET_ID", ""))
+    worksheet_name = sheet_cfg.get("worksheet", st.secrets.get("GOOGLE_SHEET_WORKSHEET", "Sheet1"))
+    creds_info = st.secrets.get("gcp_service_account", sheet_cfg.get("service_account", None))
+
+    if not spreadsheet_id:
+        return False, "Google Sheet ID is missing. Configure it in Streamlit secrets."
+
+    if not creds_info:
+        return False, "Service account credentials are missing. Configure gcp_service_account in Streamlit secrets."
+
+    try:
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ]
+
+        creds = Credentials.from_service_account_info(dict(creds_info), scopes=scopes)
+        client = gspread.authorize(creds)
+        spreadsheet = client.open_by_key(spreadsheet_id)
+
+        try:
+            worksheet = spreadsheet.worksheet(worksheet_name)
+        except gspread.WorksheetNotFound:
+            worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows=1000, cols=20)
+
+        push_df = df.copy()
+        push_df["Date"] = date.today().isoformat()
+        push_df = push_df.fillna("")
+
+        headers = [str(col) for col in push_df.columns]
+        values = push_df.astype(str).values.tolist()
+
+        existing_header = worksheet.row_values(1)
+        if not existing_header:
+            worksheet.append_row(headers, value_input_option="USER_ENTERED")
+
+        worksheet.append_rows(values, value_input_option="USER_ENTERED")
+
+        return True, f"Pushed {len(values)} row(s) to Google Sheet."
+    except Exception as err:
+        return False, f"Google Sheet push failed: {err}"
+
+
+def get_csv_path_for_date(date_str):
+
+    out_dir = Path("outputs")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir / f"validated_{date_str}.csv"
+
+
+def get_daily_csv_path():
+
+    return get_csv_path_for_date(date.today().isoformat())
+
+
+def list_saved_dates():
+
+    out_dir = Path("outputs")
+    if not out_dir.exists():
+        return []
+
+    dates = []
+    for path in out_dir.glob("validated_*.csv"):
+        match = re.match(r"validated_(\d{4}-\d{2}-\d{2})\.csv$", path.name)
+        if match:
+            dates.append(match.group(1))
+
+    return sorted(set(dates), reverse=True)
+
+
+def load_saved_rows_for_date(date_str):
+
+    csv_path = get_csv_path_for_date(date_str)
+    if not csv_path.exists():
+        return pd.DataFrame()
+
+    try:
+        return pd.read_csv(csv_path, dtype=str).fillna("")
+    except Exception:
+        return pd.DataFrame()
+
+
+def load_saved_rows_for_today():
+
+    csv_path = get_daily_csv_path()
+    if not csv_path.exists():
+        return pd.DataFrame()
+
+    try:
+        return pd.read_csv(csv_path, dtype=str).fillna("")
+    except Exception:
+        return pd.DataFrame()
+
+
+def persist_uploaded_image(uploaded_image_file):
+
+    if uploaded_image_file is None:
+        return ""
+
+    date_str = date.today().isoformat()
+    upload_dir = Path("outputs") / "uploads" / date_str
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    safe_name = Path(str(uploaded_image_file.name)).name
+    out_path = upload_dir / safe_name
+    out_path.write_bytes(uploaded_image_file.getvalue())
+
+    return str(out_path)
+
+
+def save_validated_items_to_csv(
+    df,
+    source_file,
+    replace_existing=True,
+    target_date=None,
+    upload_type="",
+    uploaded_image_path="",
+):
+
+    if df is None or len(df) == 0:
+        return False, "No validated rows to save."
+
+    date_str = target_date or date.today().isoformat()
+    out_path = get_csv_path_for_date(date_str)
+    source_file = str(source_file or "Unknown_File")
+
+    write_df = df.copy()
+    write_df["Date"] = date_str
+    write_df["Source File"] = source_file
+    write_df["Upload Type"] = str(upload_type or "")
+    write_df["Uploaded Image Path"] = str(uploaded_image_path or "")
+    write_df["Saved At"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    write_df = write_df.fillna("")
+
+    if out_path.exists():
+        existing_df = pd.read_csv(out_path, dtype=str).fillna("")
+    else:
+        existing_df = pd.DataFrame()
+
+    replaced_count = 0
+    if replace_existing and not existing_df.empty and "Source File" in existing_df.columns:
+        replaced_count = int((existing_df["Source File"] == source_file).sum())
+        existing_df = existing_df[existing_df["Source File"] != source_file]
+
+    combined_df = pd.concat([existing_df, write_df], ignore_index=True)
+
+    combined_df.to_csv(out_path, index=False, encoding="utf-8-sig")
+
+    if replaced_count > 0:
+        return True, f"Updated {len(write_df)} row(s) for {source_file} in {out_path}."
+
+    return True, f"Saved {len(write_df)} row(s) for {source_file} to {out_path}."
+
+
+def remove_saved_file_from_csv(target_date, source_file):
+
+    out_path = get_csv_path_for_date(target_date)
+    if not out_path.exists():
+        return False, f"No CSV found for {target_date}."
+
+    existing_df = pd.read_csv(out_path, dtype=str).fillna("")
+    if existing_df.empty or "Source File" not in existing_df.columns:
+        return False, "No removable records found."
+
+    rows_for_file = existing_df[existing_df["Source File"] == source_file].copy()
+    if rows_for_file.empty:
+        return False, f"No rows found for {source_file}."
+
+    filtered_df = existing_df[existing_df["Source File"] != source_file].copy()
+
+    # Clean up persisted uploaded images referenced by removed rows.
+    if "Uploaded Image Path" in rows_for_file.columns:
+        image_paths = rows_for_file["Uploaded Image Path"].astype(str).str.strip().unique().tolist()
+        for img in image_paths:
+            if img and Path(img).exists():
+                try:
+                    Path(img).unlink()
+                except OSError:
+                    pass
+
+    if filtered_df.empty:
+        out_path.unlink(missing_ok=True)
+        return True, f"Removed {len(rows_for_file)} row(s) for {source_file}."
+
+    filtered_df.to_csv(out_path, index=False, encoding="utf-8-sig")
+    return True, f"Removed {len(rows_for_file)} row(s) for {source_file}."
+
+
+
+def export_pdf(
+    df,
+    logo_data_uri="",
+    header_text="PKS Fresh",
+    above_list_text="காய்கறி பட்டியல்",
+    footer_text="",
+):
     from weasyprint import HTML
 
     date_str = date.today().strftime("%d-%m-%Y")
@@ -680,6 +1015,7 @@ def export_pdf(df, logo_data_uri=""):
             f"<td>{tamil}</td>"
             f'<td class="num">{qty_str}</td>'
             f'<td class="num">{unit}</td>'
+            "<td></td>"
             "</tr>"
         )
 
@@ -727,7 +1063,7 @@ def export_pdf(df, logo_data_uri=""):
     margin-bottom: 4px;
   }}
   .date-line {{
-    text-align: right;
+        text-align: left;
     font-size: 11px;
     color: #444;
     margin-bottom: 14px;
@@ -758,13 +1094,19 @@ def export_pdf(df, logo_data_uri=""):
     padding: 8px 14px;
     font-size: 12px;
   }}
+    .footer-note {{
+        margin-top: 14px;
+        font-size: 12px;
+        color: #222;
+        font-weight: 600;
+    }}
 </style>
 </head>
 <body>
     {logo_html}
-  <h1>PKS Fresh</h1>
-  <div class="subtitle">காய்கறி பட்டியல்</div>
-  <div class="date-line">தேதி: {date_str}</div>
+    <h1>{str(header_text or '')}</h1>
+    <div class="subtitle">காய்கறி பட்டியல்</div>
+    <div class="date-line">{str(above_list_text or '')}  &nbsp;&nbsp; &nbsp;&nbsp;  தேதி: {date_str}</div>
   <table>
     <thead>
       <tr>
@@ -772,6 +1114,7 @@ def export_pdf(df, logo_data_uri=""):
         <th>காய்கறி பெயர்</th>
         <th class="num">அளவு</th>
         <th class="num">அலகு</th>
+                <th></th>
       </tr>
     </thead>
     <tbody>
@@ -779,17 +1122,44 @@ def export_pdf(df, logo_data_uri=""):
     </tbody>
     <tfoot>
       <tr>
-        <td colspan="2">மொத்தம் {len(df)} பொருட்கள்</td>
-        <td class="num" colspan="2"></td>
+                <td colspan="3">மொத்தம் {len(df)} பொருட்கள்</td>
+                <td class="num" colspan="2"></td>
       </tr>
     </tfoot>
   </table>
+    <div class="footer-note">{str(footer_text or '')}</div>
 </body>
 </html>"""
 
     output = io.BytesIO()
     HTML(string=html_content).write_pdf(output)
     return output.getvalue()
+
+
+def get_download_text_customization(scope_key):
+
+    with st.expander("📝 Download Text Customization", expanded=False):
+        header_text = st.text_input(
+            "Header",
+            value=st.session_state.get("download_header_text", "PKS Fresh"),
+            key=f"download_header_text_{scope_key}",
+        )
+        above_list_text = st.text_input(
+            "Just Above The List",
+            value=st.session_state.get("download_above_list_text", "காய்கறி பட்டியல்"),
+            key=f"download_above_list_text_{scope_key}",
+        )
+        footer_text = st.text_area(
+            "Footer",
+            value=st.session_state.get("download_footer_text", ""),
+            key=f"download_footer_text_{scope_key}",
+        )
+
+    st.session_state["download_header_text"] = header_text
+    st.session_state["download_above_list_text"] = above_list_text
+    st.session_state["download_footer_text"] = footer_text
+
+    return header_text, above_list_text, footer_text
 
 
 
@@ -803,337 +1173,478 @@ st.subheader(
     "Multilingual Vegetable Document Extractor"
 )
 
+st.session_state["print_logo_data_uri"] = get_default_logo_data_uri()
 
-uploaded_file = st.file_uploader(
-    "Upload PDF / Image / Excel",
-    type=[
-        "pdf",
-        "png",
-        "jpg",
-        "jpeg",
-        "xlsx"
+tab_primary, tab_saved, tab_consolidated = st.tabs(
+    [
+        "Upload Order",
+        "Saved Orders",
+        "Consolidated Orders",
     ]
 )
 
-st.session_state["print_logo_data_uri"] = get_default_logo_data_uri()
-
-
-
-if uploaded_file:
-
-
-    filename = uploaded_file.name.lower()
-
-
-    st.success(
-        f"Uploaded: {uploaded_file.name}"
+with tab_primary:
+    today_saved_df = load_saved_rows_for_today()
+    st.info(
+        "Status: "
+        f"Active file = {st.session_state.get('active_source_file', 'None') or 'None'} | "
+        f"Extracted rows = {len(st.session_state.get('items', []))} | "
+        f"Confirmed rows = {len(st.session_state.get('validated_items', []))} | "
+        f"Saved today = {len(today_saved_df)}"
     )
 
-
-    # -------------------------------
-    # IMAGE
-    # -------------------------------
-
-    if filename.endswith(
-        (".png",".jpg",".jpeg")
-    ):
-
-        image = read_image(
-            uploaded_file
-        )
-
-        st.image(
-            image,
-            caption="Uploaded Document",
-            use_container_width=True
-        )
-
-        image_text, image_error = extract_image_text(image)
-
-        if image_error:
-            st.warning(image_error)
-        else:
-            st.session_state.raw_text = image_text
-
-            st.subheader(
-                "Extracted Image Text"
-            )
-
-            st.text_area(
-                "Text",
-                image_text,
-                height=250
-            )
-
-
-
-    # -------------------------------
-    # PDF
-    # -------------------------------
-
-    elif filename.endswith(".pdf"):
-
-
-        text = read_pdf(
-            uploaded_file
-        )
-
-
-        st.session_state.raw_text = text
-
-
-        st.subheader(
-            "Extracted PDF Text"
-        )
-
-
-        st.text_area(
-            "Text",
-            text,
-            height=250
-        )
-
-
-    # -------------------------------
-    # EXCEL
-    # -------------------------------
-
-    elif filename.endswith(".xlsx"):
-
-
-        df = read_excel(
-            uploaded_file
-        )
-
-
-        st.subheader(
-            "Excel Preview"
-        )
-
-
-        st.dataframe(
-            df,
-            use_container_width=True
-        )
-
-
-        st.session_state.raw_text = (
-            df.to_string()
-        )
-
-
-
-# ============================================================
-# EXTRACTION BUTTON
-# ============================================================
-
-
-if st.button(
-    "🔍 Extract Vegetables"
-):
-
-
-    items, extraction_report = detect_vegetables(
-        st.session_state.raw_text,
-        return_details=True,
+    uploaded_file = st.file_uploader(
+        "Upload PDF / Image / Excel",
+        type=[
+            "pdf",
+            "png",
+            "jpg",
+            "jpeg",
+            "xlsx"
+        ]
     )
 
-
-    st.session_state["items"] = items
-    st.session_state["extraction_report"] = extraction_report
-
-
-    if items:
+    if uploaded_file:
+        filename = uploaded_file.name.lower()
+        st.session_state["active_source_file"] = uploaded_file.name
 
         st.success(
-            f"{len(items)} vegetables detected"
+            f"Uploaded: {uploaded_file.name}"
         )
 
-    else:
+        if filename.endswith((".png", ".jpg", ".jpeg")):
+            st.session_state["active_upload_type"] = "image"
+            st.session_state["active_uploaded_image_path"] = persist_uploaded_image(uploaded_file)
 
-        st.warning(
-            "No vegetables detected"
-        )
+            image = read_image(uploaded_file)
 
-
-
-# ============================================================
-# VALIDATION TABLE
-# ============================================================
-
-
-if st.session_state["items"]:
-
-
-    st.subheader(
-        "✏️ Validate Extraction"
-    )
-
-    try:
-        # Ensure items is a list and create DataFrame
-        items_list = list(st.session_state["items"]) if st.session_state["items"] else []
-        df = pd.DataFrame(items_list)
-    except (ValueError, TypeError) as e:
-        st.error(f"Error creating table: {e}")
-        df = pd.DataFrame(columns=["Source Name", "Tamil Name", "Quantity", "Status"])
-
-    with st.expander("➕ Add Missing Vegetable", expanded=False):
-        st.caption("Pick a known English name (or use custom) to auto-map Tamil and append a new row.")
-
-        alias_options = sorted({alias.title() for alias in VEGETABLE_ALIASES.keys()})
-        alias_options.append("Custom...")
-
-        selected_alias = st.selectbox(
-            "English Name",
-            options=alias_options,
-            index=0,
-            key="manual_english_name_select",
-            help="Start typing to quickly search and pick a known alias.",
-        )
-
-        add_col_1, add_col_2 = st.columns([2, 1])
-
-        with add_col_1:
-            manual_name = ""
-            if selected_alias == "Custom...":
-                manual_name = st.text_input(
-                    "Custom English Name",
-                    placeholder="e.g. Ladies Finger, Onion Big, Brinjal",
-                    key="manual_english_name_custom",
-                )
-
-        with add_col_2:
-            manual_qty = st.text_input(
-                "Quantity",
-                placeholder="e.g. 5 KG",
-                key="manual_quantity",
+            st.image(
+                image,
+                caption="Uploaded Document",
+                use_container_width=True
             )
 
-        if st.button("Add Row", key="add_manual_row"):
-            name_value = manual_name.strip() if selected_alias == "Custom..." else selected_alias.strip()
+            image_text, image_error = extract_image_text(image)
 
-            if not name_value:
-                st.warning("Enter an English vegetable name before adding.")
+            if image_error:
+                st.warning(image_error)
             else:
-                canonical_name = find_canonical_vegetable_name(name_value)
+                st.session_state.raw_text = image_text
 
-                if not canonical_name:
-                    normalized_name = normalize_text(name_value)
-                    if normalized_name in VEGETABLE_TAMIL_MAP:
-                        canonical_name = normalized_name
-
-                if not canonical_name:
-                    st.warning(
-                        "Vegetable name not recognized. Try a known alias such as 'Ladies Finger' or 'Coriander Leaves'."
-                    )
-                else:
-                    st.session_state["items"].append(
-                        {
-                            "Source Name": canonical_name.title(),
-                            "Tamil Name": VEGETABLE_TAMIL_MAP.get(canonical_name, ""),
-                            "Quantity": manual_qty.strip(),
-                            "Status": "Manually Added",
-                            "Confidence": "Manual",
-                        }
-                    )
-                    st.success(f"Added: {canonical_name.title()}")
-                    st.rerun()
-
-
-    left_col, right_col = st.columns([1, 2])
-
-    with left_col:
-        st.markdown("### Extraction Quality")
-
-        report = st.session_state.get("extraction_report", {})
-
-        st.metric("Candidate Rows", report.get("candidate_lines", 0))
-        st.metric("Extracted Rows", report.get("extracted_rows", 0))
-        st.metric("Rows With Quantity", report.get("with_quantity", 0))
-        st.metric("High Confidence", report.get("high_confidence", 0))
-
-        unmatched_lines = report.get("unmatched_lines", [])
-
-        if unmatched_lines:
-            with st.expander("Unmatched Candidate Lines", expanded=False):
-                st.dataframe(
-                    pd.DataFrame(unmatched_lines),
-                    use_container_width=True,
+                st.subheader(
+                    "Extracted Image Text"
                 )
+
+                st.text_area(
+                    "Text",
+                    image_text,
+                    height=250
+                )
+
+        elif filename.endswith(".pdf"):
+            st.session_state["active_upload_type"] = "pdf"
+            st.session_state["active_uploaded_image_path"] = ""
+
+            text = read_pdf(uploaded_file)
+            st.session_state.raw_text = text
+
+            st.subheader("Extracted PDF Text")
+            st.text_area("Text", text, height=250)
+
+        elif filename.endswith(".xlsx"):
+            st.session_state["active_upload_type"] = "excel"
+            st.session_state["active_uploaded_image_path"] = ""
+
+            df = read_excel(uploaded_file)
+
+            st.subheader("Excel Preview")
+            st.dataframe(df, use_container_width=True)
+
+            st.session_state.raw_text = df.to_string()
+
+    if st.button("🔍 Extract Vegetables"):
+        items, extraction_report = detect_vegetables(
+            st.session_state.raw_text,
+            return_details=True,
+        )
+
+        st.session_state["items"] = items
+        st.session_state["extraction_report"] = extraction_report
+
+        if items:
+            st.success(f"{len(items)} vegetables detected")
         else:
-            st.caption("No unmatched candidate lines detected.")
+            st.warning("No vegetables detected")
 
-    with right_col:
-        edited_df = st.data_editor(
-            df,
-            use_container_width=True
+    if st.session_state["items"]:
+        st.subheader("✏️ Validate Extraction")
+
+        try:
+            items_list = list(st.session_state["items"]) if st.session_state["items"] else []
+            df = pd.DataFrame(items_list)
+        except (ValueError, TypeError) as e:
+            st.error(f"Error creating table: {e}")
+            df = pd.DataFrame(columns=["Source Name", "Tamil Name", "Quantity", "Status"])
+
+        with st.expander("➕ Add Missing Vegetable", expanded=False):
+            st.caption("Pick a known English name (or use custom) to auto-map Tamil and append a new row.")
+
+            alias_options = sorted({alias.title() for alias in VEGETABLE_ALIASES.keys()})
+            alias_options.append("Custom...")
+
+            selected_alias = st.selectbox(
+                "English Name",
+                options=alias_options,
+                index=0,
+                key="manual_english_name_select",
+                help="Start typing to quickly search and pick a known alias.",
+            )
+
+            add_col_1, add_col_2 = st.columns([2, 1])
+
+            with add_col_1:
+                manual_name = ""
+                if selected_alias == "Custom...":
+                    manual_name = st.text_input(
+                        "Custom English Name",
+                        placeholder="e.g. Ladies Finger, Onion Big, Brinjal",
+                        key="manual_english_name_custom",
+                    )
+
+            with add_col_2:
+                manual_qty = st.text_input(
+                    "Quantity",
+                    placeholder="e.g. 5 KG",
+                    key="manual_quantity",
+                )
+
+            if st.button("Add Row", key="add_manual_row"):
+                name_value = manual_name.strip() if selected_alias == "Custom..." else selected_alias.strip()
+
+                if not name_value:
+                    st.warning("Enter an English vegetable name before adding.")
+                else:
+                    canonical_name = find_canonical_vegetable_name(name_value)
+
+                    if not canonical_name:
+                        normalized_name = normalize_text(name_value)
+                        if normalized_name in VEGETABLE_TAMIL_MAP:
+                            canonical_name = normalized_name
+
+                    if not canonical_name:
+                        st.warning(
+                            "Vegetable name not recognized. Try a known alias such as 'Ladies Finger' or 'Coriander Leaves'."
+                        )
+                    else:
+                        st.session_state["items"].append(
+                            {
+                                "Source Name": canonical_name.title(),
+                                "Tamil Name": VEGETABLE_TAMIL_MAP.get(canonical_name, ""),
+                                "Quantity": manual_qty.strip(),
+                                "Status": "Manually Added",
+                                "Confidence": "Manual",
+                            }
+                        )
+                        st.success(f"Added: {canonical_name.title()}")
+                        st.rerun()
+
+        left_col, right_col = st.columns([1, 2])
+
+        with left_col:
+            st.markdown("### Extraction Quality")
+
+            report = st.session_state.get("extraction_report", {})
+
+            st.metric("Candidate Rows", report.get("candidate_lines", 0))
+            st.metric("Extracted Rows", report.get("extracted_rows", 0))
+            st.metric("Rows With Quantity", report.get("with_quantity", 0))
+            st.metric("High Confidence", report.get("high_confidence", 0))
+
+            unmatched_lines = report.get("unmatched_lines", [])
+
+            if unmatched_lines:
+                with st.expander("Unmatched Candidate Lines", expanded=False):
+                    st.dataframe(
+                        pd.DataFrame(unmatched_lines),
+                        use_container_width=True,
+                    )
+            else:
+                st.caption("No unmatched candidate lines detected.")
+
+        with right_col:
+            edited_df = st.data_editor(
+                df,
+                use_container_width=True
+            )
+
+        st.checkbox(
+            "Also push confirmed rows to Google Sheet",
+            key="push_gsheet_on_confirm",
+            help="CSV save is always done. Enable this only when Sheet secrets are configured.",
         )
 
+        if st.button("✅ Confirm"):
+            st.session_state["validated_items"] = edited_df
+            st.success("Validated successfully")
 
-    if st.button(
-        "✅ Confirm"
-    ):
+            source_file = st.session_state.get("active_source_file", "Unknown_File")
+            csv_ok, csv_msg = save_validated_items_to_csv(
+                edited_df,
+                source_file=source_file,
+                replace_existing=True,
+                upload_type=st.session_state.get("active_upload_type", ""),
+                uploaded_image_path=st.session_state.get("active_uploaded_image_path", ""),
+            )
+            if csv_ok:
+                st.info(csv_msg)
+            else:
+                st.warning(csv_msg)
 
-        st.session_state["validated_items"] = (
-            edited_df
-        )
+            if st.session_state.get("push_gsheet_on_confirm", False):
+                push_ok, push_msg = push_validated_items_to_google_sheet(edited_df)
+                if push_ok:
+                    st.info(push_msg)
+                else:
+                    st.warning(push_msg)
 
-        st.success(
-            "Validated successfully"
-        )
+        if len(st.session_state["validated_items"]):
+            st.subheader("✅ Confirmed Output")
+            confirmed_df = consolidate(st.session_state["validated_items"])
+            st.dataframe(confirmed_df, use_container_width=True)
 
+            dl_header, dl_above, dl_footer = get_download_text_customization("confirmed")
 
+            confirmed_excel = export_excel(
+                confirmed_df,
+                logo_path=get_default_logo_path(),
+                header_text=dl_header,
+                above_list_text=dl_above,
+                footer_text=dl_footer,
+            )
+            confirmed_pdf = export_pdf(
+                confirmed_df,
+                logo_data_uri=st.session_state.get("print_logo_data_uri", ""),
+                header_text=dl_header,
+                above_list_text=dl_above,
+                footer_text=dl_footer,
+            )
 
-# ============================================================
-# CONSOLIDATION
-# ============================================================
+            st.download_button(
+                "⬇️ Download Confirmed Excel",
+                confirmed_excel,
+                file_name="confirmed_vegetables.xlsx"
+            )
+            st.download_button(
+                "⬇️ Download Confirmed PDF",
+                confirmed_pdf,
+                file_name="confirmed_vegetables.pdf"
+            )
 
+with tab_saved:
+    st.subheader("🗂️ Saved Orders")
 
-if len(
-    st.session_state["validated_items"]
-):
+    saved_dates_for_tab = list_saved_dates()
+    if not saved_dates_for_tab:
+        st.info("Status: No saved dates yet.")
+    else:
+        st.info(f"Status: Available saved dates = {len(saved_dates_for_tab)}")
 
+    with st.expander("Saved Records and Revalidation", expanded=False):
+        available_dates = saved_dates_for_tab
 
-    st.subheader(
-        "📦 Consolidated Output"
-    )
+        if not available_dates:
+            st.caption("No saved rows yet. Validate and confirm a file to create output CSV.")
+        else:
+            selected_saved_date = st.selectbox(
+                "Select date",
+                options=available_dates,
+                key="selected_saved_date_tab",
+            )
 
+            saved_by_date_df = load_saved_rows_for_date(selected_saved_date)
+            file_count = 0
+            if not saved_by_date_df.empty and "Source File" in saved_by_date_df.columns:
+                file_count = saved_by_date_df["Source File"].nunique()
+            st.info(
+                f"Status: Date = {selected_saved_date} | Rows = {len(saved_by_date_df)} | Files = {file_count}"
+            )
 
-    final_df = consolidate(
-        st.session_state["validated_items"]
-    )
+            if saved_by_date_df.empty:
+                st.caption("No rows found for selected date.")
+            else:
+                st.caption(f"Loaded {len(saved_by_date_df)} rows from {get_csv_path_for_date(selected_saved_date)}")
 
+                if "Source File" in saved_by_date_df.columns:
+                    source_files = sorted(saved_by_date_df["Source File"].astype(str).unique().tolist())
+                else:
+                    source_files = []
 
-    st.dataframe(
-        final_df,
-        use_container_width=True
-    )
+                if source_files:
+                    selected_saved_file = st.selectbox(
+                        "Choose file",
+                        options=source_files,
+                        key="individual_saved_file_tab",
+                    )
 
+                    selected_df = saved_by_date_df[saved_by_date_df["Source File"] == selected_saved_file].copy()
 
+                    img_path = ""
+                    if "Uploaded Image Path" in selected_df.columns and not selected_df.empty:
+                        img_path = str(selected_df["Uploaded Image Path"].iloc[0]).strip()
 
-    excel_file = export_excel(
-        final_df
-    )
+                    if selected_saved_date == date.today().isoformat() and img_path and Path(img_path).exists():
+                        st.image(img_path, caption=f"Uploaded image: {selected_saved_file}", use_container_width=True)
 
+                    display_cols = [
+                        col
+                        for col in ["Source Name", "Tamil Name", "Quantity", "Status", "Confidence"]
+                        if col in selected_df.columns
+                    ]
 
-    pdf_file = export_pdf(
-        final_df,
-        logo_data_uri=st.session_state.get("print_logo_data_uri", ""),
-    )
+                    editable_df = st.data_editor(
+                        selected_df[display_cols],
+                        use_container_width=True,
+                        key="saved_revalidate_editor_tab",
+                    )
 
+                    action_col_1, action_col_2 = st.columns(2)
 
-    st.download_button(
-        "⬇️ Download Excel",
-        excel_file,
-        file_name="vegetables.xlsx"
-    )
+                    with action_col_1:
+                        overwrite_clicked = st.button(
+                            "💾 Overwrite Saved File",
+                            key="update_saved_file_btn_tab",
+                        )
 
+                    with action_col_2:
+                        remove_clicked = st.button(
+                            "🗑️ Remove Selected Upload",
+                            key="remove_saved_file_btn_tab",
+                        )
 
-    st.download_button(
-        "⬇️ Download PDF",
-        pdf_file,
-        file_name="vegetables.pdf"
-    )
+                    if overwrite_clicked:
+                        upload_type = ""
+                        if "Upload Type" in selected_df.columns and not selected_df.empty:
+                            upload_type = str(selected_df["Upload Type"].iloc[0]).strip()
+
+                        upd_ok, upd_msg = save_validated_items_to_csv(
+                            editable_df,
+                            source_file=selected_saved_file,
+                            replace_existing=True,
+                            target_date=selected_saved_date,
+                            upload_type=upload_type,
+                            uploaded_image_path=img_path,
+                        )
+                        if upd_ok:
+                            st.success(upd_msg)
+                            st.rerun()
+                        else:
+                            st.warning(upd_msg)
+
+                    if remove_clicked:
+                        rem_ok, rem_msg = remove_saved_file_from_csv(
+                            selected_saved_date,
+                            selected_saved_file,
+                        )
+                        if rem_ok:
+                            st.success(rem_msg)
+                            st.rerun()
+                        else:
+                            st.warning(rem_msg)
+
+                    individual_df = consolidate(editable_df)
+                    st.markdown("### Download Individual Order")
+                    st.dataframe(individual_df, use_container_width=True)
+
+                    dl_header, dl_above, dl_footer = get_download_text_customization("individual")
+
+                    individual_excel = export_excel(
+                        individual_df,
+                        logo_path=get_default_logo_path(),
+                        header_text=dl_header,
+                        above_list_text=dl_above,
+                        footer_text=dl_footer,
+                    )
+                    individual_pdf = export_pdf(
+                        individual_df,
+                        logo_data_uri=st.session_state.get("print_logo_data_uri", ""),
+                        header_text=dl_header,
+                        above_list_text=dl_above,
+                        footer_text=dl_footer,
+                    )
+
+                    st.download_button(
+                        "⬇️ Download Individual Excel",
+                        individual_excel,
+                        file_name=f"individual_{selected_saved_file}_{selected_saved_date}.xlsx"
+                    )
+                    st.download_button(
+                        "⬇️ Download Individual PDF",
+                        individual_pdf,
+                        file_name=f"individual_{selected_saved_file}_{selected_saved_date}.pdf"
+                    )
+
+with tab_consolidated:
+    st.subheader("📦 Consolidated Orders")
+
+    consolidated_dates = list_saved_dates()
+    if not consolidated_dates:
+        st.info("Status: No saved dates available for consolidation.")
+    else:
+        st.info(f"Status: Available dates for consolidation = {len(consolidated_dates)}")
+
+    with st.expander("Consolidated Records", expanded=False):
+        available_dates = consolidated_dates
+
+        if not available_dates:
+            st.caption("No saved rows available yet.")
+        else:
+            selected_records_date = st.selectbox(
+                "Select date",
+                options=available_dates,
+                key="selected_records_date_tab",
+            )
+
+            saved_by_date_df = load_saved_rows_for_date(selected_records_date)
+            st.info(
+                f"Status: Date = {selected_records_date} | Source rows = {len(saved_by_date_df)}"
+            )
+
+            if saved_by_date_df.empty:
+                st.caption("No rows found for selected date.")
+            else:
+                final_df = consolidate(saved_by_date_df)
+
+                st.dataframe(final_df, use_container_width=True)
+
+                dl_header, dl_above, dl_footer = get_download_text_customization("consolidated")
+
+                excel_file = export_excel(
+                    final_df,
+                    logo_path=get_default_logo_path(),
+                    header_text=dl_header,
+                    above_list_text=dl_above,
+                    footer_text=dl_footer,
+                )
+
+                pdf_file = export_pdf(
+                    final_df,
+                    logo_data_uri=st.session_state.get("print_logo_data_uri", ""),
+                    header_text=dl_header,
+                    above_list_text=dl_above,
+                    footer_text=dl_footer,
+                )
+
+                st.download_button(
+                    "⬇️ Download Consolidated Excel",
+                    excel_file,
+                    file_name=f"vegetables_{selected_records_date}.xlsx"
+                )
+
+                st.download_button(
+                    "⬇️ Download Consolidated PDF",
+                    pdf_file,
+                    file_name=f"vegetables_{selected_records_date}.pdf"
+                )
 
 
 
