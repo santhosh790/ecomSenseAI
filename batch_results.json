@@ -1,0 +1,238 @@
+[
+  {
+    "file": "data/-PrintPurchaseOrder-3.pdf",
+    "kind": ".pdf",
+    "chars": 54750,
+    "extracted_rows": 516,
+    "with_quantity": 488,
+    "candidate_rows": 552,
+    "high_confidence": 488,
+    "unmatched_candidate_rows": 36,
+    "first_10_veg": [
+      "Baby Corn",
+      "Banana Raw",
+      "Banana Yellakki",
+      "Beans French",
+      "Beetroot",
+      "Brinjal",
+      "Broccoli",
+      "Cabbage",
+      "Capsicum",
+      "Carrot"
+    ],
+    "sample_rows": [
+      {
+        "Source Name": "Baby Corn",
+        "Tamil Name": "\u0baa\u0bc7\u0baa\u0bbf \u0b95\u0bbe\u0bb0\u0bcd\u0ba9\u0bcd",
+        "Quantity": "",
+        "Status": "Needs Review",
+        "Confidence": "Medium"
+      },
+      {
+        "Source Name": "Banana Raw",
+        "Tamil Name": "\u0bb5\u0bbe\u0bb4\u0bc8\u0b95\u0bcd\u0b95\u0bbe\u0baf\u0bcd",
+        "Quantity": "1 KG",
+        "Status": "Auto Extracted",
+        "Confidence": "High"
+      },
+      {
+        "Source Name": "Beans French",
+        "Tamil Name": "\u0baa\u0bbf\u0bb0\u0bc6\u0b9e\u0bcd\u0b9a\u0bc1 \u0baa\u0bc0\u0ba9\u0bcd\u0bb8\u0bcd",
+        "Quantity": "3 KG",
+        "Status": "Auto Extracted",
+        "Confidence": "High"
+      },
+      {
+        "Source Name": "Beetroot",
+        "Tamil Name": "\u0baa\u0bc0\u0b9f\u0bcd\u0bb0\u0bc2\u0b9f\u0bcd",
+        "Quantity": "6 KG",
+        "Status": "Auto Extracted",
+        "Confidence": "High"
+      },
+      {
+        "Source Name": "Brinjal",
+        "Tamil Name": "\u0b95\u0ba4\u0bcd\u0ba4\u0bbf\u0bb0\u0bbf\u0b95\u0bcd\u0b95\u0bbe\u0baf\u0bcd",
+        "Quantity": "14 KG",
+        "Status": "Auto Extracted",
+        "Confidence": "High"
+      }
+    ]
+  },
+  {
+    "file": "data/Screenshot 2026-07-26 at 12.32.32.png",
+    "kind": ".png",
+    "chars": 2341,
+    "extracted_rows": 30,
+    "with_quantity": 30,
+    "candidate_rows": 32,
+    "high_confidence": 30,
+    "unmatched_candidate_rows": 2,
+    "first_10_veg": [
+      "Baby Corn",
+      "Banana Raw",
+      "Beans French",
+      "Beetroot",
+      "Brinjal",
+      "Cabbage",
+      "Carrot",
+      "Cauliflower",
+      "Chow Chow",
+      "Coconut"
+    ],
+    "sample_rows": [
+      {
+        "Source Name": "Baby Corn",
+        "Tamil Name": "\u0baa\u0bc7\u0baa\u0bbf \u0b95\u0bbe\u0bb0\u0bcd\u0ba9\u0bcd",
+        "Quantity": "80.09 KG",
+        "Status": "Auto Extracted",
+        "Confidence": "High"
+      },
+      {
+        "Source Name": "Banana Raw",
+        "Tamil Name": "\u0bb5\u0bbe\u0bb4\u0bc8\u0b95\u0bcd\u0b95\u0bbe\u0baf\u0bcd",
+        "Quantity": "36.00 KG",
+        "Status": "Auto Extracted",
+        "Confidence": "High"
+      },
+      {
+        "Source Name": "Beans French",
+        "Tamil Name": "\u0baa\u0bbf\u0bb0\u0bc6\u0b9e\u0bcd\u0b9a\u0bc1 \u0baa\u0bc0\u0ba9\u0bcd\u0bb8\u0bcd",
+        "Quantity": "56.00 KG",
+        "Status": "Auto Extracted",
+        "Confidence": "High"
+      },
+      {
+        "Source Name": "Beetroot",
+        "Tamil Name": "\u0baa\u0bc0\u0b9f\u0bcd\u0bb0\u0bc2\u0b9f\u0bcd",
+        "Quantity": "23.00 KG",
+        "Status": "Auto Extracted",
+        "Confidence": "High"
+      },
+      {
+        "Source Name": "Brinjal",
+        "Tamil Name": "\u0b95\u0ba4\u0bcd\u0ba4\u0bbf\u0bb0\u0bbf\u0b95\u0bcd\u0b95\u0bbe\u0baf\u0bcd",
+        "Quantity": "23.00 KG",
+        "Status": "Auto Extracted",
+        "Confidence": "High"
+      }
+    ]
+  },
+  {
+    "file": "data/WhatsApp Image 2026-07-25 at 15.05.21 (1).jpeg",
+    "kind": ".jpeg",
+    "chars": 851,
+    "extracted_rows": 12,
+    "with_quantity": 4,
+    "candidate_rows": 12,
+    "high_confidence": 4,
+    "unmatched_candidate_rows": 0,
+    "first_10_veg": [
+      "Beans Cluster",
+      "Beetroot",
+      "Brinjal",
+      "Cabbage",
+      "Chow Chow",
+      "Coconut",
+      "Coriander",
+      "Curry Leaves",
+      "Ginger",
+      "Green Chilly"
+    ],
+    "sample_rows": [
+      {
+        "Source Name": "Onion",
+        "Tamil Name": "\u0bb5\u0bc6\u0b99\u0bcd\u0b95\u0bbe\u0baf\u0bae\u0bcd",
+        "Quantity": "45 KG",
+        "Status": "Auto Extracted",
+        "Confidence": "High"
+      },
+      {
+        "Source Name": "Cabbage",
+        "Tamil Name": "\u0bae\u0bc1\u0b9f\u0bcd\u0b9f\u0bc8\u0b95\u0bcd\u0b95\u0bcb\u0bb8\u0bcd",
+        "Quantity": "6 KG",
+        "Status": "Auto Extracted",
+        "Confidence": "High"
+      },
+      {
+        "Source Name": "Ginger",
+        "Tamil Name": "\u0b87\u0b9e\u0bcd\u0b9a\u0bbf",
+        "Quantity": "",
+        "Status": "Needs Review",
+        "Confidence": "Medium"
+      },
+      {
+        "Source Name": "Green Chilly",
+        "Tamil Name": "\u0baa\u0b9a\u0bcd\u0b9a\u0bc8 \u0bae\u0bbf\u0bb3\u0b95\u0bbe\u0baf\u0bcd",
+        "Quantity": "",
+        "Status": "Needs Review",
+        "Confidence": "Medium"
+      },
+      {
+        "Source Name": "Beetroot",
+        "Tamil Name": "\u0baa\u0bc0\u0b9f\u0bcd\u0bb0\u0bc2\u0b9f\u0bcd",
+        "Quantity": "",
+        "Status": "Needs Review",
+        "Confidence": "Medium"
+      }
+    ]
+  },
+  {
+    "file": "data/WhatsApp Image 2026-07-25 at 15.05.21.jpeg",
+    "kind": ".jpeg",
+    "chars": 900,
+    "extracted_rows": 22,
+    "with_quantity": 21,
+    "candidate_rows": 23,
+    "high_confidence": 21,
+    "unmatched_candidate_rows": 1,
+    "first_10_veg": [
+      "Banana Raw",
+      "Beans French",
+      "Brinjal",
+      "Carrot",
+      "Cauliflower",
+      "Chow Chow",
+      "Coconut",
+      "Coriander",
+      "Curry Leaves",
+      "Drumstick"
+    ],
+    "sample_rows": [
+      {
+        "Source Name": "Brinjal",
+        "Tamil Name": "\u0b95\u0ba4\u0bcd\u0ba4\u0bbf\u0bb0\u0bbf\u0b95\u0bcd\u0b95\u0bbe\u0baf\u0bcd",
+        "Quantity": "12 KG",
+        "Status": "Auto Extracted",
+        "Confidence": "High"
+      },
+      {
+        "Source Name": "Carrot",
+        "Tamil Name": "\u0b95\u0bc7\u0bb0\u0b9f\u0bcd",
+        "Quantity": "6 KG",
+        "Status": "Auto Extracted",
+        "Confidence": "High"
+      },
+      {
+        "Source Name": "Cauliflower",
+        "Tamil Name": "\u0b95\u0bbe\u0bb2\u0bbf\u0b83\u0baa\u0bcd\u0bb3\u0bb5\u0bb0\u0bcd",
+        "Quantity": "4 KG",
+        "Status": "Auto Extracted",
+        "Confidence": "High"
+      },
+      {
+        "Source Name": "Chow Chow",
+        "Tamil Name": "\u0b9a\u0bcc \u0b9a\u0bcc",
+        "Quantity": "",
+        "Status": "Needs Review",
+        "Confidence": "Medium"
+      },
+      {
+        "Source Name": "Coconut",
+        "Tamil Name": "\u0ba4\u0bc7\u0b99\u0bcd\u0b95\u0bbe\u0baf\u0bcd",
+        "Quantity": "35 EA",
+        "Status": "Auto Extracted",
+        "Confidence": "High"
+      }
+    ]
+  }
+]
