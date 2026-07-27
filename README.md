@@ -37,7 +37,7 @@ Image OCR now prefers PaddleOCR with OpenCV preprocessing and keeps Tesseract as
 
 Install Python dependencies from `requirements.txt` (now includes `paddleocr`, `paddlepaddle`, `opencv-python`, `rapidfuzz`, `numpy`).
 
-In the app image flow, click `Run OCR` after upload to run the OCR pipeline and preview extracted text before validation.
+In the app image flow, OCR runs automatically after upload and extracted text is previewed before validation.
 
 ### Domain-driven structure
 
