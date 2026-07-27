@@ -162,16 +162,24 @@ def build_row_candidates(lines, noise_line_patterns):
 def build_fragmented_pdf_candidates(lines, noise_line_patterns):
     candidates = []
     qty_line_pattern = r"^\d+(?:\.\d+)?\s*(?:KG|KGS|NOS|EA)\b"
+    unit_only_pattern = r"^(?:KG|KGS|NOS|EA)\.?$"
+    standalone_qty_pattern = r"^\d+(?:\.\d+)?$"
 
     for idx, raw_line in enumerate(lines):
         line = raw_line.strip()
         if not line or is_noise_line(line, noise_line_patterns):
             continue
 
-        if not re.match(qty_line_pattern, line, flags=re.IGNORECASE):
-            continue
+        quantity = ""
+        if re.match(qty_line_pattern, line, flags=re.IGNORECASE):
+            quantity = extract_row_quantity(line)
+        elif re.match(standalone_qty_pattern, line):
+            prev_idx = idx - 1
+            prev = lines[prev_idx].strip() if prev_idx >= 0 else ""
+            if re.match(unit_only_pattern, prev, flags=re.IGNORECASE):
+                unit = prev.upper().replace("KGS", "KG")
+                quantity = f"{line} {unit}"
 
-        quantity = extract_row_quantity(line)
         if not quantity:
             continue
 
@@ -188,6 +196,8 @@ def build_fragmented_pdf_candidates(lines, noise_line_patterns):
                 continue
             if re.match(r"^\d{6,7}$", prev):
                 continue
+            if re.match(unit_only_pattern, prev, flags=re.IGNORECASE):
+                continue
 
             if re.search(r"[A-Za-z]", prev):
                 material = prev
@@ -202,12 +212,15 @@ def build_fragmented_pdf_candidates(lines, noise_line_patterns):
 def is_fragmented_pdf_layout(lines, noise_line_patterns):
     qty_line_pattern = r"^\d+(?:\.\d+)?\s*(?:KG|KGS|NOS|EA)\b"
     standalone_item_code_pattern = r"^\d{6,7}$"
+    unit_only_pattern = r"^(?:KG|KGS|NOS|EA)\.?$"
+    standalone_qty_pattern = r"^\d+(?:\.\d+)?$"
 
     qty_lines = 0
     item_code_lines = 0
     material_lines = 0
+    split_qty_lines = 0
 
-    for raw_line in lines:
+    for idx, raw_line in enumerate(lines):
         line = raw_line.strip()
         if not line or is_noise_line(line, noise_line_patterns):
             continue
@@ -216,10 +229,14 @@ def is_fragmented_pdf_layout(lines, noise_line_patterns):
             qty_lines += 1
         elif re.match(standalone_item_code_pattern, line):
             item_code_lines += 1
+        elif re.match(standalone_qty_pattern, line):
+            prev = lines[idx - 1].strip() if idx > 0 else ""
+            if re.match(unit_only_pattern, prev, flags=re.IGNORECASE):
+                split_qty_lines += 1
         elif re.search(r"[A-Za-z]", line):
             material_lines += 1
 
-    return qty_lines >= 2 and item_code_lines >= 1 and material_lines >= 2
+    return (qty_lines + split_qty_lines) >= 2 and item_code_lines >= 1 and material_lines >= 2
 
 
 def fuzzy_match_vegetable_name(text, vegetable_aliases, confidence_threshold=75):

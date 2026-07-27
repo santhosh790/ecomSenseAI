@@ -9,6 +9,8 @@ from application.extraction_service import fuzzy_match_vegetable_name
 
 VEGETABLE_ALIASES = {
     "ONION": "ONION",
+    "TOMATO": "TOMATO",
+    "TOMATO COUNTRY": "TOMATO",
     "POTOTO": "POTATO",
     "POTATO": "POTATO",
     "BANANA RAW": "BANANA RAW",
@@ -23,6 +25,7 @@ VEGETABLE_ALIASES = {
 
 VEGETABLE_TAMIL_MAP = {
     "ONION": "வெங்காயம்",
+    "TOMATO": "தக்காளி",
     "POTATO": "உருளைக்கிழங்கு",
     "BANANA RAW": "வாழைக்காய்",
     "BEANS FRENCH": "பிரெஞ்சு பீன்ஸ்",
@@ -198,6 +201,47 @@ class ExtractionServiceTests(unittest.TestCase):
         qty_by_name = {row["Source Name"]: row["Quantity"] for row in items}
         self.assertEqual(qty_by_name.get("Baby Corn"), "1 KG")
         self.assertEqual(qty_by_name.get("Banana Raw"), "3 KG")
+        self.assertGreaterEqual(report["with_quantity"], 2)
+
+    def test_detect_vegetables_fragmented_pdf_uom_qty_split(self):
+        text = "\n".join(
+            [
+                "S.No.",
+                "Item Code/Description",
+                "HSN/SAC",
+                "UOM",
+                "Qty",
+                "Rate",
+                "GST Rate",
+                "Amount",
+                "1",
+                "ONION_KG",
+                "070310",
+                "Kg",
+                "200",
+                "25.00",
+                "0%",
+                "5,000.00",
+                "2",
+                "TOMATO COUNTRY_1X1 KG",
+                "070200",
+                "Kg",
+                "1",
+            ]
+        )
+
+        items, report = detect_vegetables(
+            text,
+            vegetable_aliases=VEGETABLE_ALIASES,
+            vegetable_tamil_map=VEGETABLE_TAMIL_MAP,
+            noise_line_patterns=NOISE_LINE_PATTERNS,
+            return_details=True,
+            confidence_threshold=70,
+        )
+
+        qty_by_name = {row["Source Name"]: row["Quantity"] for row in items}
+        self.assertEqual(qty_by_name.get("Onion"), "200 KG")
+        self.assertEqual(qty_by_name.get("Tomato"), "1 KG")
         self.assertGreaterEqual(report["with_quantity"], 2)
 
 
