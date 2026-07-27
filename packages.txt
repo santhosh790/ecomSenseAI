@@ -2,7 +2,6 @@ tesseract-ocr
 tesseract-ocr-eng
 fonts-noto-core
 fonts-lohit-taml
-libglib2.0-0
 libcairo2
 libpango-1.0-0
 libpangocairo-1.0-0
