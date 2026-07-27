@@ -1,9 +1,45 @@
 import io
+import os
 import re
+import sys
 from datetime import date
 from pathlib import Path
 
 import pandas as pd
+
+
+def _configure_macos_weasyprint_loader_paths():
+    """Ensure Homebrew dylib paths are visible to WeasyPrint on macOS."""
+    if sys.platform != "darwin":
+        return
+
+    candidate_dirs = []
+    for brew_prefix in (Path("/opt/homebrew"), Path("/usr/local")):
+        candidate_dirs.append(brew_prefix / "lib")
+        for lib_name in (
+            "glib",
+            "pango",
+            "cairo",
+            "gdk-pixbuf",
+            "harfbuzz",
+            "fontconfig",
+            "freetype",
+            "libffi",
+        ):
+            candidate_dirs.append(brew_prefix / "opt" / lib_name / "lib")
+
+    existing_dirs = [str(path) for path in candidate_dirs if path.exists()]
+    if not existing_dirs:
+        return
+
+    current_paths = [
+        path for path in os.environ.get("DYLD_FALLBACK_LIBRARY_PATH", "").split(":") if path
+    ]
+    for path in existing_dirs:
+        if path not in current_paths:
+            current_paths.append(path)
+
+    os.environ["DYLD_FALLBACK_LIBRARY_PATH"] = ":".join(current_paths)
 
 
 def _prepare_quantity_fields(df):
@@ -151,6 +187,7 @@ def export_pdf(
     footer_text="",
     client_name="",
 ):
+    _configure_macos_weasyprint_loader_paths()
     from weasyprint import HTML
 
     date_str = date.today().strftime("%d-%m-%Y")
