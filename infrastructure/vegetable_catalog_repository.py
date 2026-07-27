@@ -1,7 +1,15 @@
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
-from domain.models import VegetableCatalog
+try:
+    from domain.models import VegetableCatalog
+except ImportError:
+    @dataclass(frozen=True)
+    class VegetableCatalog:
+        vegetable_tamil_map: dict[str, str]
+        vegetable_aliases: dict[str, str]
+        noise_line_patterns: list[str]
 
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
