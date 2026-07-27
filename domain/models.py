@@ -18,3 +18,10 @@ class VegetableDetection:
             "Status": self.status,
             "Confidence": f"{self.confidence_score}%",
         }
+
+
+@dataclass(frozen=True)
+class VegetableCatalog:
+    vegetable_tamil_map: dict[str, str]
+    vegetable_aliases: dict[str, str]
+    noise_line_patterns: list[str]

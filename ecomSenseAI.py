@@ -4,10 +4,10 @@ import shutil
 from datetime import date
 from pathlib import Path
 
+from application.vegetable_detection_service import detect_vegetables as detect_vegetables_service
+from application.vegetable_detection_service import find_canonical_vegetable_name as find_canonical_vegetable_name_service
+from application.vegetable_catalog_service import load_vegetable_catalog
 from application.reporting_service import consolidate, consolidate_with_client_columns, export_excel, export_pdf
-from application.extraction_service import apply_confidence_policy
-from application.extraction_service import detect_vegetables as detect_vegetables_service
-from application.extraction_service import find_canonical_vegetable_name as find_canonical_vegetable_name_service
 from application.extraction_service import normalize_text as normalize_text_service
 from infrastructure.assets_service import get_default_logo_data_uri, get_default_logo_path
 from infrastructure.document_readers import read_excel, read_image, read_pdf
@@ -54,163 +54,7 @@ st.set_page_config(
 )
 
 
-# ============================================================
-# VEGETABLE MASTER DATA
-# ============================================================
-
-VEGETABLE_TAMIL_MAP = {
-    "BABY CORN": "பேபி கார்ன் (BABY CORN)",
-    "BANANA RAW": "வாழைக்காய் (BANANA RAW)",
-    "BANANA YELLAKKI": "வாழைப்பழம் (BANANA YELLAKKI)",
-    "BEANS FRENCH": "பிரெஞ்சு பீன்ஸ் (BEANS FRENCH)",
-    "BEANS CLUSTER": "கொத்தவரங்காய் (BEANS CLUSTER)",
-    "BEETROOT": "பீட்ரூட் (BEETROOT)",
-    "BRINJAL": "கத்திரிக்காய் (BRINJAL)",
-    "BROCCOLI": "ப்ரோகோலி (BROCCOLI)",
-    "CABBAGE": "முட்டைக்கோஸ் (CABBAGE)",
-    "CAPSICUM": "குடைமிளகாய் (CAPSICUM)",
-    "CARROT": "கேரட் (CARROT)",
-    "CAULIFLOWER": "காலிஃப்ளவர் (CAULIFLOWER)",
-    "CHOW CHOW": "சௌ சௌ (CHOW CHOW)",
-    "COCONUT": "தேங்காய் (COCONUT)",
-    "CORIANDER": "கொத்தமல்லி (CORIANDER)",
-    "CUCUMBER": "வெள்ளரிக்காய் (CUCUMBER)",
-    "CURRY LEAVES": "கறிவேப்பிலை (CURRY LEAVES)",
-    "DRUMSTICK": "முருங்கைக்காய் (DRUMSTICK)",
-    "GARLIC": "பூண்டு (GARLIC)",
-    "GINGER": "இஞ்சி (GINGER)",
-    "GREEN CHILLY": "பச்சை மிளகாய் (GREEN CHILLY)",
-    "KEERA": "கீரை (KEERA)",
-    "KNOL KHOL": "நூல்கோல் (KNOL KHOL)",
-    "LADY FINGER": "வெண்டைக்காய் (LADY FINGER)",
-    "LAUKI": "சுரைக்காய் (LAUKI)",
-    "LEMON": "எலுமிச்சை (LEMON)",
-    "MANGALORE CUCUMBER": "மங்களூர் வெள்ளரி (MANGALORE CUCUMBER)",
-    "MINT": "புதினா (MINT)",
-    "MUSHROOM": "காளான் (MUSHROOM)",
-    "MUSK MELON": "முலாம் பழம் (MUSK MELON)",
-    "MOSSAMBI": "சாத்துக்குடி (MOSSAMBI)",
-    "ONION": "வெங்காயம் (ONION)",
-    "PAPAYA": "பப்பாளி (PAPAYA)",
-    "PINEAPPLE": "அன்னாசி (PINEAPPLE)",
-    "POTATO": "உருளைக்கிழங்கு (POTATO)",
-    "PUMPKIN RED": "பரங்கிக்காய் (PUMPKIN RED)",
-    "PUMPKIN WHITE": "வெள்ளை பூசணிக்காய் (PUMPKIN WHITE)",
-    "RADISH": "முள்ளங்கி (RADISH)",
-    "RAW MANGO": "மாங்காய் (RAW MANGO)",
-    "SNAKE GOURD": "புடலங்காய் (SNAKE GOURD)",
-    "SPINACH": "பசலை கீரை (SPINACH)",
-    "SPRING ONION": "ஸ்ப்ரிங் ஆனியன் (SPRING ONION)",
-    "TENDLI": "கோவைக்காய் (TENDLI)",
-    "TOMATO": "தக்காளி (TOMATO)",
-    "WATER MELON": "தர்பூசணி (WATER MELON)",
-    "YAM SURAN": "சேனைக்கிழங்கு (YAM SURAN)",
-}
-
-VEGETABLE_ALIASES = {
-    "BABY CORN": "BABY CORN",
-    "BANANA RAW": "BANANA RAW",
-    "RAW BANANA": "BANANA RAW",
-    "BANANA YELLAKKI": "BANANA YELLAKKI",
-    "BEANS FRENCH": "BEANS FRENCH",
-    "FRENCH BEANS": "BEANS FRENCH",
-    "BEANS CLUSTER": "BEANS CLUSTER",
-    "GAWAR": "BEANS CLUSTER",
-    "BEETROOT": "BEETROOT",
-    "BRINJAL BIG": "BRINJAL",
-    "BRINJAL VARI": "BRINJAL",
-    "BRINJAL": "BRINJAL",
-    "BROCCOLI": "BROCCOLI",
-    "CABBAGE GREEN": "CABBAGE",
-    "CABBAGE": "CABBAGE",
-    "CABAGE": "CABBAGE",
-    "CAPSICUM GREEN": "CAPSICUM",
-    "CAPSICUM": "CAPSICUM",
-    "CARROT": "CARROT",
-    "CAULIFLOWER": "CAULIFLOWER",
-    "CHOW CHOW": "CHOW CHOW",
-    "COCONUT RAW NOS": "COCONUT",
-    "COCONUT FRESH": "COCONUT",
-    "COCONUT": "COCONUT",
-    "COCOUNT": "COCONUT",
-    "RAW COCOUNT": "COCONUT",
-    "CORIANDER FRESH": "CORIANDER",
-    "CORIANDER LEAVES": "CORIANDER",
-    "CORIANDER": "CORIANDER",
-    "CORINDER": "CORIANDER",
-    "CORINDER FRESH": "CORIANDER",
-    "CUCUMBER": "CUCUMBER",
-    "CURRY LEAVES": "CURRY LEAVES",
-    "CURYLEAVE": "CURRY LEAVES",
-    "CURYLEAVES": "CURRY LEAVES",
-    "DRUM STICK": "DRUMSTICK",
-    "DRUMSTICK": "DRUMSTICK",
-    "GARLIC BOLD": "GARLIC",
-    "GARLIC DRY": "GARLIC",
-    "GARLIC": "GARLIC",
-    "GINGER FRESH": "GINGER",
-    "GINGER": "GINGER",
-    "GREEN CHILLY": "GREEN CHILLY",
-    "GREEN CHILLI": "GREEN CHILLY",
-    "KEERA SOPPU": "KEERA",
-    "SPINACH PALAK": "SPINACH",
-    "SPINACH": "SPINACH",
-    "KNOL KHOL": "KNOL KHOL",
-    "LADY FINGER": "LADY FINGER",
-    "LADIES FINGER": "LADY FINGER",
-    "LAUKI": "LAUKI",
-    "BOTTLE GOURD": "LAUKI",
-    "LEMON YELLOW": "LEMON",
-    "LEMON": "LEMON",
-    "MANGALORE CUCUMBER": "MANGALORE CUCUMBER",
-    "SOWTHEKAI": "MANGALORE CUCUMBER",
-    "MINT FRESH": "MINT",
-    "MINT LEAVES": "MINT",
-    "MINT": "MINT",
-    "MUSHROOM FRESH": "MUSHROOM",
-    "MUSHROOM": "MUSHROOM",
-    "MUSK MELON": "MUSK MELON",
-    "MOSSAMBI": "MOSSAMBI",
-    "SWEET LIME": "MOSSAMBI",
-    "ONION BIG": "ONION",
-    "ONION": "ONION",
-    "PAPAYA": "PAPAYA",
-    "PINEAPPLE": "PINEAPPLE",
-    "POTATO LARGE": "POTATO",
-    "POTATO": "POTATO",
-    "POTOTO": "POTATO",
-    "PUMPKIN RED": "PUMPKIN RED",
-    "PUMPKIN WHITE": "PUMPKIN WHITE",
-    "WHITE PUMPKIN": "PUMPKIN WHITE",
-    "RADDISH": "RADISH",
-    "RADISH": "RADISH",
-    "RAW MANGO": "RAW MANGO",
-    "SNAKE GOURD": "SNAKE GOURD",
-    "SPRING ONION": "SPRING ONION",
-    "TENDLI": "TENDLI",
-    "TOMATO TABLE": "TOMATO",
-    "TOMATO COUNTRY": "TOMATO",
-    "TOMATO": "TOMATO",
-    "WATER MELON": "WATER MELON",
-    "YAM SURAN": "YAM SURAN",
-}
-
-NOISE_LINE_PATTERNS = [
-    r"^purchase order",
-    r"^order no",
-    r"^delivery date",
-    r"^payment terms",
-    r"^department",
-    r"^prepared by",
-    r"^checked by",
-    r"^authorised signatory",
-    r"^amount \(in words\)",
-    r"^total\s+\d",
-    r"^cgst",
-    r"^sgst",
-    r"^igst",
-    r"^page\s+\d",
-]
+VEGETABLE_CATALOG = load_vegetable_catalog()
 
 
 # ============================================================
@@ -282,28 +126,20 @@ def find_canonical_vegetable_name(text):
     confidence_match_threshold = int(st.session_state.get("confidence_match_threshold", 75))
     return find_canonical_vegetable_name_service(
         text,
-        vegetable_aliases=VEGETABLE_ALIASES,
         confidence_threshold=confidence_match_threshold,
     )
+
+
 def detect_vegetables(text, return_details=False):
     confidence_match_threshold = int(st.session_state.get("confidence_match_threshold", 75))
     confidence_auto_extract_threshold = int(st.session_state.get("confidence_auto_extract_threshold", 90))
 
-    output = detect_vegetables_service(
+    return detect_vegetables_service(
         text,
-        vegetable_aliases=VEGETABLE_ALIASES,
-        vegetable_tamil_map=VEGETABLE_TAMIL_MAP,
-        noise_line_patterns=NOISE_LINE_PATTERNS,
         return_details=return_details,
         confidence_threshold=confidence_match_threshold,
+        auto_extract_threshold=confidence_auto_extract_threshold,
     )
-
-    if return_details:
-        items, report = output
-        items = apply_confidence_policy(items, auto_extract_threshold=confidence_auto_extract_threshold)
-        return items, report
-
-    return apply_confidence_policy(output, auto_extract_threshold=confidence_auto_extract_threshold)
 
 
 def get_download_text_customization(scope_key):
@@ -480,7 +316,7 @@ with tab_primary:
         with st.expander("➕ Add Missing Vegetable", expanded=False):
             st.caption("Pick a known English name (or use custom) to auto-map Tamil and append a new row.")
 
-            alias_options = sorted({alias.title() for alias in VEGETABLE_ALIASES.keys()})
+            alias_options = sorted({alias.title() for alias in VEGETABLE_CATALOG.vegetable_aliases.keys()})
             alias_options.append("Custom...")
 
             selected_alias = st.selectbox(
@@ -519,7 +355,7 @@ with tab_primary:
 
                     if not canonical_name:
                         normalized_name = normalize_text(name_value)
-                        if normalized_name in VEGETABLE_TAMIL_MAP:
+                        if normalized_name in VEGETABLE_CATALOG.vegetable_tamil_map:
                             canonical_name = normalized_name
 
                     if not canonical_name:
@@ -530,7 +366,7 @@ with tab_primary:
                         st.session_state["items"].append(
                             {
                                 "Source Name": canonical_name.title(),
-                                "Tamil Name": VEGETABLE_TAMIL_MAP.get(canonical_name, ""),
+                                "Tamil Name": VEGETABLE_CATALOG.vegetable_tamil_map.get(canonical_name, ""),
                                 "Quantity": manual_qty.strip(),
                                 "Status": "Manually Added",
                                 "Confidence": "Manual",

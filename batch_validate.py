@@ -1,50 +1,14 @@
-import ast
 import json
-import re
 from pathlib import Path
 
 import fitz
 from PIL import Image, ImageOps, ImageFilter
 import pytesseract
 
-APP_FILE = Path("ecomSenseAI.py")
+from application.vegetable_detection_service import detect_vegetables
+
 DATA_DIR = Path("data")
 OUT_FILE = Path("batch_results.json")
-
-code = APP_FILE.read_text(encoding="utf-8")
-module = ast.parse(code)
-
-wanted_assigns = {
-    "VEGETABLE_TAMIL_MAP",
-    "VEGETABLE_ALIASES",
-    "NOISE_LINE_PATTERNS",
-}
-wanted_funcs = {
-    "normalize_text",
-    "normalize_material_name",
-    "is_noise_line",
-    "extract_row_quantity",
-    "extract_row_fields",
-    "build_row_candidates",
-    "find_canonical_vegetable_name",
-    "is_candidate_line",
-    "build_extraction_report",
-    "detect_vegetables",
-}
-
-snippets = []
-for node in module.body:
-    if isinstance(node, ast.Assign):
-        for target in node.targets:
-            if isinstance(target, ast.Name) and target.id in wanted_assigns:
-                snippets.append(ast.get_source_segment(code, node))
-                break
-    elif isinstance(node, ast.FunctionDef) and node.name in wanted_funcs:
-        snippets.append(ast.get_source_segment(code, node))
-
-ns = {"re": re}
-exec("\n\n".join(snippets), ns)
-detect_vegetables = ns["detect_vegetables"]
 
 
 def read_pdf_text(path: Path) -> str:
