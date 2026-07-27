@@ -26,6 +26,44 @@ fonts-lohit-taml
 
 Without the system binary, image uploads will show a warning and OCR text extraction will be skipped.
 
+## Iteration 2 OCR pipeline
+
+Image OCR now prefers PaddleOCR with OpenCV preprocessing and keeps Tesseract as fallback.
+
+- PaddleOCR: line-level document OCR for uploaded images
+- OpenCV: grayscale + threshold preprocessing
+- RapidFuzz: fuzzy vegetable matching for OCR-noisy text
+- Confidence: each extracted row now includes a confidence percentage
+
+Install Python dependencies from `requirements.txt` (now includes `paddleocr`, `paddlepaddle`, `opencv-python`, `rapidfuzz`, `numpy`).
+
+In the app image flow, click `Run OCR` after upload to run the OCR pipeline and preview extracted text before validation.
+
+### Domain-driven structure
+
+Iteration 2 extraction logic is now split into layers:
+
+- `domain/models.py`: domain entity for extracted rows (`VegetableDetection`)
+- `application/extraction_service.py`: parsing, fuzzy matching, confidence policy
+- `infrastructure/ocr_engine.py`: PaddleOCR + OpenCV preprocessing + Tesseract fallback
+
+`ecomSenseAI.py` remains the UI/composition layer and delegates OCR/extraction to these modules.
+
+### Confidence controls
+
+In `Upload Order`, use `Confidence Controls` to tune:
+
+- Minimum OCR name-match confidence
+- Auto-extract status threshold
+
+Rows below your auto-extract threshold are marked as `Needs Review` for human verification.
+
+### Run regression tests
+
+```bash
+python -m unittest tests/test_extraction_service.py
+```
+
 ## Tamil font on Streamlit Cloud
 
 Tamil text in PDF export is rendered server-side via WeasyPrint. Streamlit Cloud does not include macOS fonts (like Tamil Sangam MN), so Linux fonts must be installed via `packages.txt`.

@@ -1,14 +1,28 @@
 import streamlit as st
 import pandas as pd
-import fitz  # PyMuPDF
-import re
-import io
 import shutil
-import base64
-import mimetypes
-from PIL import Image, ImageOps, ImageFilter
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
+
+from application.reporting_service import consolidate, consolidate_with_client_columns, export_excel, export_pdf
+from application.extraction_service import apply_confidence_policy
+from application.extraction_service import detect_vegetables as detect_vegetables_service
+from application.extraction_service import find_canonical_vegetable_name as find_canonical_vegetable_name_service
+from application.extraction_service import normalize_text as normalize_text_service
+from infrastructure.assets_service import get_default_logo_data_uri, get_default_logo_path
+from infrastructure.document_readers import read_excel, read_image, read_pdf
+from infrastructure.google_sheets_service import push_validated_items_to_google_sheet
+from infrastructure.ocr_engine import extract_image_text as extract_image_text_service
+from infrastructure.ocr_engine import load_ocr_model
+from infrastructure.persistence_service import (
+    get_csv_path_for_date,
+    list_saved_dates,
+    load_saved_rows_for_date,
+    load_saved_rows_for_today,
+    persist_uploaded_image,
+    remove_saved_file_from_csv,
+    save_validated_items_to_csv,
+)
 
 try:
     import pytesseract
@@ -45,52 +59,52 @@ st.set_page_config(
 # ============================================================
 
 VEGETABLE_TAMIL_MAP = {
-    "BABY CORN": "பேபி கார்ன்",
-    "BANANA RAW": "வாழைக்காய்",
-    "BANANA YELLAKKI": "வாழைப்பழம்",
-    "BEANS FRENCH": "பிரெஞ்சு பீன்ஸ்",
-    "BEANS CLUSTER": "கொத்தவரங்காய்",
-    "BEETROOT": "பீட்ரூட்",
-    "BRINJAL": "கத்திரிக்காய்",
-    "BROCCOLI": "ப்ரோகோலி",
-    "CABBAGE": "முட்டைக்கோஸ்",
-    "CAPSICUM": "குடைமிளகாய்",
-    "CARROT": "கேரட்",
-    "CAULIFLOWER": "காலிஃப்ளவர்",
-    "CHOW CHOW": "சௌ சௌ",
-    "COCONUT": "தேங்காய்",
-    "CORIANDER": "கொத்தமல்லி",
-    "CUCUMBER": "வெள்ளரிக்காய்",
-    "CURRY LEAVES": "கறிவேப்பிலை",
-    "DRUMSTICK": "முருங்கைக்காய்",
-    "GARLIC": "பூண்டு",
-    "GINGER": "இஞ்சி",
-    "GREEN CHILLY": "பச்சை மிளகாய்",
-    "KEERA": "கீரை",
-    "KNOL KHOL": "நூல்கோல்",
-    "LADY FINGER": "வெண்டைக்காய்",
-    "LAUKI": "சுரைக்காய்",
-    "LEMON": "எலுமிச்சை",
-    "MANGALORE CUCUMBER": "மங்களூர் வெள்ளரி",
-    "MINT": "புதினா",
-    "MUSHROOM": "காளான்",
-    "MUSK MELON": "முலாம் பழம்",
-    "MOSSAMBI": "சாத்துக்குடி",
-    "ONION": "வெங்காயம்",
-    "PAPAYA": "பப்பாளி",
-    "PINEAPPLE": "அன்னாசி",
-    "POTATO": "உருளைக்கிழங்கு",
-    "PUMPKIN RED": "பரங்கிக்காய்",
-    "PUMPKIN WHITE": "வெள்ளை பூசணிக்காய்",
-    "RADISH": "முள்ளங்கி",
-    "RAW MANGO": "மாங்காய்",
-    "SNAKE GOURD": "புடலங்காய்",
-    "SPINACH": "பசலை கீரை",
-    "SPRING ONION": "ஸ்ப்ரிங் ஆனியன்",
-    "TENDLI": "கோவைக்காய்",
-    "TOMATO": "தக்காளி",
-    "WATER MELON": "தர்பூசணி",
-    "YAM SURAN": "சேனைக்கிழங்கு",
+    "BABY CORN": "பேபி கார்ன் (BABY CORN)",
+    "BANANA RAW": "வாழைக்காய் (BANANA RAW)",
+    "BANANA YELLAKKI": "வாழைப்பழம் (BANANA YELLAKKI)",
+    "BEANS FRENCH": "பிரெஞ்சு பீன்ஸ் (BEANS FRENCH)",
+    "BEANS CLUSTER": "கொத்தவரங்காய் (BEANS CLUSTER)",
+    "BEETROOT": "பீட்ரூட் (BEETROOT)",
+    "BRINJAL": "கத்திரிக்காய் (BRINJAL)",
+    "BROCCOLI": "ப்ரோகோலி (BROCCOLI)",
+    "CABBAGE": "முட்டைக்கோஸ் (CABBAGE)",
+    "CAPSICUM": "குடைமிளகாய் (CAPSICUM)",
+    "CARROT": "கேரட் (CARROT)",
+    "CAULIFLOWER": "காலிஃப்ளவர் (CAULIFLOWER)",
+    "CHOW CHOW": "சௌ சௌ (CHOW CHOW)",
+    "COCONUT": "தேங்காய் (COCONUT)",
+    "CORIANDER": "கொத்தமல்லி (CORIANDER)",
+    "CUCUMBER": "வெள்ளரிக்காய் (CUCUMBER)",
+    "CURRY LEAVES": "கறிவேப்பிலை (CURRY LEAVES)",
+    "DRUMSTICK": "முருங்கைக்காய் (DRUMSTICK)",
+    "GARLIC": "பூண்டு (GARLIC)",
+    "GINGER": "இஞ்சி (GINGER)",
+    "GREEN CHILLY": "பச்சை மிளகாய் (GREEN CHILLY)",
+    "KEERA": "கீரை (KEERA)",
+    "KNOL KHOL": "நூல்கோல் (KNOL KHOL)",
+    "LADY FINGER": "வெண்டைக்காய் (LADY FINGER)",
+    "LAUKI": "சுரைக்காய் (LAUKI)",
+    "LEMON": "எலுமிச்சை (LEMON)",
+    "MANGALORE CUCUMBER": "மங்களூர் வெள்ளரி (MANGALORE CUCUMBER)",
+    "MINT": "புதினா (MINT)",
+    "MUSHROOM": "காளான் (MUSHROOM)",
+    "MUSK MELON": "முலாம் பழம் (MUSK MELON)",
+    "MOSSAMBI": "சாத்துக்குடி (MOSSAMBI)",
+    "ONION": "வெங்காயம் (ONION)",
+    "PAPAYA": "பப்பாளி (PAPAYA)",
+    "PINEAPPLE": "அன்னாசி (PINEAPPLE)",
+    "POTATO": "உருளைக்கிழங்கு (POTATO)",
+    "PUMPKIN RED": "பரங்கிக்காய் (PUMPKIN RED)",
+    "PUMPKIN WHITE": "வெள்ளை பூசணிக்காய் (PUMPKIN WHITE)",
+    "RADISH": "முள்ளங்கி (RADISH)",
+    "RAW MANGO": "மாங்காய் (RAW MANGO)",
+    "SNAKE GOURD": "புடலங்காய் (SNAKE GOURD)",
+    "SPINACH": "பசலை கீரை (SPINACH)",
+    "SPRING ONION": "ஸ்ப்ரிங் ஆனியன் (SPRING ONION)",
+    "TENDLI": "கோவைக்காய் (TENDLI)",
+    "TOMATO": "தக்காளி (TOMATO)",
+    "WATER MELON": "தர்பூசணி (WATER MELON)",
+    "YAM SURAN": "சேனைக்கிழங்கு (YAM SURAN)",
 }
 
 VEGETABLE_ALIASES = {
@@ -239,901 +253,57 @@ if "download_above_list_text" not in st.session_state:
 if "download_footer_text" not in st.session_state:
     st.session_state["download_footer_text"] = ""
 
+if "active_client_name" not in st.session_state:
+    st.session_state["active_client_name"] = ""
+
+if "confidence_auto_extract_threshold" not in st.session_state:
+    st.session_state["confidence_auto_extract_threshold"] = 90
+
+if "confidence_match_threshold" not in st.session_state:
+    st.session_state["confidence_match_threshold"] = 75
+
 
 # ============================================================
-# DOCUMENT READERS
+# UI ORCHESTRATION WRAPPERS
 # ============================================================
 
-
-def read_pdf(file):
-
-    text = ""
-
-    pdf = fitz.open(stream=file.read(), filetype="pdf")
-
-    for page in pdf:
-        text += page.get_text()
-
-    return text
-
-
-
-def read_excel(file):
-
-    df = pd.read_excel(file)
-
-    return df
-
-
-
-def read_image(file):
-
-    image = Image.open(file)
-
-    return image
+@st.cache_resource
+def load_ocr():
+    return load_ocr_model()
 
 
 def extract_image_text(image):
-
-    if pytesseract is None:
-        return "", "pytesseract is not installed. Install pytesseract and Tesseract OCR engine to enable image extraction."
-
-    # Improve OCR accuracy by converting to high-contrast grayscale.
-    gray = ImageOps.grayscale(image)
-    enhanced = ImageOps.autocontrast(gray)
-    sharpened = enhanced.filter(ImageFilter.SHARPEN)
-
-    try:
-        text = pytesseract.image_to_string(sharpened)
-    except pytesseract.pytesseract.TesseractNotFoundError:
-        return (
-            "",
-            "Tesseract OCR binary is not installed on this system. "
-            "For Streamlit Cloud, add a packages.txt with 'tesseract-ocr'. "
-            "For macOS, run: brew install tesseract",
-        )
-    except pytesseract.pytesseract.TesseractError as err:
-        return "", f"OCR failed: {err}"
-
-    if not text.strip():
-        return "", "No text detected in image. Try a clearer image or higher resolution scan."
-
-    return text, ""
-
-
-
-# ============================================================
-# BASIC EXTRACTION LOGIC
-# ============================================================
-
-
-def extract_quantity(text):
-
-    """
-    Extract quantities like:
-    2 kg
-    500 gm
-    1kg
-    """
-
-    pattern = r"(\d+\.?\d*)\s*(kg|kgs|g|gm|gram|grams)"
-
-    matches = re.findall(
-        pattern,
-        text,
-        flags=re.IGNORECASE
-    )
-
-    return matches
-
+    return extract_image_text_service(image, ocr_model=load_ocr())
 
 def normalize_text(text):
-
-    normalized = re.sub(r"[^A-Za-z0-9]+", " ", str(text).upper())
-    return re.sub(r"\s+", " ", normalized).strip()
-
-
-def normalize_material_name(name):
-
-    value = normalize_text(name)
-
-    # Remove packaging tokens that appear in table exports.
-    value = re.sub(r"\bUB\b", " ", value)
-    value = re.sub(r"\b\d+\s*X+\s*\d+\s*(?:K+G|KGS|NOS|EA)\b", " ", value)
-    value = re.sub(r"\b\d+(?:\.\d+)?\s*(?:KG|KGS|NOS|EA)\b", " ", value)
-    value = re.sub(r"\s+", " ", value).strip()
-
-    return value
-
-
-def is_noise_line(line):
-
-    value = line.strip().lower()
-
-    if not value:
-        return True
-
-    for pattern in NOISE_LINE_PATTERNS:
-        if re.search(pattern, value):
-            return True
-
-    return False
-
-
-def extract_row_quantity(text):
-
-    compact = re.sub(r"\s+", " ", str(text)).strip().upper()
-    compact = re.sub(r"\b\d+\s*X+\s*\d+\s*(?:K+G|KGS|NOS|EA)\b", " ", compact)
-    compact = re.sub(r"\s+", " ", compact).strip()
-
-    # Prefer table style first: "... KG 45 25.07.2026"
-    unit_qty_match = re.search(
-        r"\b(KG|KGS|NOS|EA)\.?\b\s*(\d+(?:\.\d+)?)\b",
-        compact,
-        flags=re.IGNORECASE,
-    )
-
-    if unit_qty_match:
-        unit = unit_qty_match.group(1).upper()
-        qty = unit_qty_match.group(2)
-        if unit in ["KGS", "KG"]:
-            unit = "KG"
-        return f"{qty} {unit}"
-
-    # PO style: "... 1 Kgs 90.00 90.00"
-    qty_unit_match = re.search(
-        r"\b(\d+(?:\.\d+)?)\s*(KG|KGS|G|GM|GRAMS?|NOS|EA)\.?\b",
-        compact,
-        flags=re.IGNORECASE,
-    )
-
-    if qty_unit_match:
-        qty = qty_unit_match.group(1)
-        unit = qty_unit_match.group(2).upper()
-        if unit in ["KGS", "KG"]:
-            unit = "KG"
-        return f"{qty} {unit}"
-
-    return ""
-
-
-def extract_row_fields(text):
-
-    compact = re.sub(r"\s+", " ", str(text)).strip()
-    compact = re.sub(r"\b\d+\s*X+\s*\d+\s*(?:K+G|KGS|NOS|EA)\b", " ", compact, flags=re.IGNORECASE)
-    compact = re.sub(r"\s+", " ", compact).strip()
-
-    # PO-style line: "1 1100006 BABY CORN PEELED 1 Kgs 90.00 90.00"
-    po_match = re.search(
-        r"^\s*\d+\s+\d{6,7}\s+(.+?)\s+(\d+(?:\.\d+)?)\s*(KG|KGS|NOS|EA)\b",
-        compact,
-        flags=re.IGNORECASE,
-    )
-
-    if po_match:
-        material = po_match.group(1).strip()
-        qty = po_match.group(2)
-        unit = po_match.group(3).upper()
-        if unit in ["KG", "KGS"]:
-            unit = "KG"
-        return material, f"{qty} {unit}"
-
-    # Table-style line: "1 206558 BEANS CLUSTER_UB_1X1KG KG 1"
-    table_match = re.search(
-        r"^\s*[\[\(\{\|_\-]*\s*\d+[\.)\]|_:\-]*\s+(?:\d+\s+)?(.+?)\s+(KG|KGS|NOS|EA)\.?\s+(\d+(?:\.\d+)?)\b",
-        compact,
-        flags=re.IGNORECASE,
-    )
-
-    if table_match:
-        material = table_match.group(1).strip()
-        unit = table_match.group(2).upper()
-        qty = table_match.group(3)
-        if unit in ["KG", "KGS"]:
-            unit = "KG"
-        return material, f"{qty} {unit}"
-
-    # Free-form line: "Onion 80kg" or "Raw cocount 15nos"
-    freeform_match = re.search(
-        r"^\s*(.+?)\s+(\d+(?:\.\d+)?)\s*(KG|KGS|NOS|EA)\.?\s*$",
-        compact,
-        flags=re.IGNORECASE,
-    )
-
-    if freeform_match:
-        material = freeform_match.group(1).strip()
-        qty = freeform_match.group(2)
-        unit = freeform_match.group(3).upper()
-        if unit in ["KG", "KGS"]:
-            unit = "KG"
-        return material, f"{qty} {unit}"
-
-    return "", ""
-
-
-def build_row_candidates(lines):
-
-    row_candidates = []
-    current_row = ""
-
-    # OCR may add symbols around serial numbers: "[5", "12.", "2_|"
-    serial_row_pattern = r"^\s*[\[\(\{\|_\-]*\s*\d+[\.)\]|_:\-]*\s*"
-
-    for raw_line in lines:
-        line = raw_line.strip()
-
-        if not line or is_noise_line(line):
-            continue
-
-        if re.match(serial_row_pattern, line):
-            if current_row:
-                row_candidates.append(current_row)
-            current_row = line
-        else:
-            # Join wrapped line fragments (common in PDFs/ocr tables).
-            if current_row:
-                current_row = f"{current_row} {line}"
-            else:
-                # Free-form lists may have one item per line without serial numbers.
-                row_candidates.append(line)
-
-    if current_row:
-        row_candidates.append(current_row)
-
-    return row_candidates
-
+    return normalize_text_service(text)
 
 def find_canonical_vegetable_name(text):
-
-    material = normalize_material_name(text)
-
-    for alias in sorted(
-        VEGETABLE_ALIASES.keys(),
-        key=len,
-        reverse=True,
-    ):
-        if alias in material:
-            return VEGETABLE_ALIASES[alias]
-
-    return ""
-
-
-def is_candidate_line(line):
-
-    if is_noise_line(line):
-        return False
-
-    has_alpha = bool(re.search(r"[A-Za-z]", line))
-    has_qty = bool(re.search(r"\b(\d+(?:\.\d+)?)\s*(KG|KGS|NOS|EA)\b", line, flags=re.IGNORECASE))
-    has_unit_then_num = bool(re.search(r"\b(KG|KGS|NOS|EA)\b\s*\d", line, flags=re.IGNORECASE))
-    has_item_code = bool(re.search(r"\b\d{6,7}\b", line))
-
-    return has_alpha and (has_qty or has_unit_then_num or has_item_code)
-
-
-def build_extraction_report(results, unmatched_lines, candidate_count, total_lines):
-
-    extracted_count = len(results)
-    with_quantity = sum(1 for item in results if item.get("Quantity", "").strip())
-    high_confidence = sum(1 for item in results if item.get("Confidence") == "High")
-
-    return {
-        "total_lines": total_lines,
-        "candidate_lines": candidate_count,
-        "extracted_rows": extracted_count,
-        "with_quantity": with_quantity,
-        "without_quantity": max(extracted_count - with_quantity, 0),
-        "high_confidence": high_confidence,
-        "unmatched_lines": unmatched_lines,
-    }
-
-
-
+    confidence_match_threshold = int(st.session_state.get("confidence_match_threshold", 75))
+    return find_canonical_vegetable_name_service(
+        text,
+        vegetable_aliases=VEGETABLE_ALIASES,
+        confidence_threshold=confidence_match_threshold,
+    )
 def detect_vegetables(text, return_details=False):
+    confidence_match_threshold = int(st.session_state.get("confidence_match_threshold", 75))
+    confidence_auto_extract_threshold = int(st.session_state.get("confidence_auto_extract_threshold", 90))
 
-    """
-    Parse item rows from PO/table style text and capture quantities.
-    """
-
-    if not text:
-        empty_report = build_extraction_report([], [], 0, 0)
-        return ([], empty_report) if return_details else []
-
-    lines = [line.strip() for line in str(text).splitlines() if line.strip()]
-    row_candidates = build_row_candidates(lines)
-    results = []
-    unmatched_lines = []
-    candidate_count = len(row_candidates)
-
-    for idx, row in enumerate(row_candidates, start=1):
-
-        material, quantity = extract_row_fields(row)
-        material_for_match = material if material else row
-
-        canonical_name = find_canonical_vegetable_name(material_for_match)
-
-        if not canonical_name:
-            unmatched_lines.append(
-                {
-                    "Line": idx,
-                    "Text": row,
-                }
-            )
-            continue
-
-        if not quantity:
-            quantity = extract_row_quantity(row)
-
-        source_name = canonical_name.title()
-        tamil_name = VEGETABLE_TAMIL_MAP.get(canonical_name, "")
-
-        results.append(
-            {
-                "Source Name": source_name,
-                "Tamil Name": tamil_name,
-                "Quantity": quantity,
-                "Status": "Needs Review" if not quantity else "Auto Extracted",
-                "Confidence": "High" if quantity else "Medium",
-            }
-        )
-
-    if results:
-        report = build_extraction_report(
-            results,
-            unmatched_lines,
-            candidate_count,
-            len(lines),
-        )
-        return (results, report) if return_details else results
-
-    # Fallback for very noisy text: detect name only.
-    normalized_text = normalize_material_name(text)
-
-    seen_fallback = set()
-
-    for alias, canonical_name in VEGETABLE_ALIASES.items():
-        if alias in normalized_text:
-            if canonical_name in seen_fallback:
-                continue
-
-            seen_fallback.add(canonical_name)
-            results.append(
-                {
-                    "Source Name": canonical_name.title(),
-                    "Tamil Name": VEGETABLE_TAMIL_MAP.get(canonical_name, ""),
-                    "Quantity": "",
-                    "Status": "Needs Review",
-                    "Confidence": "Low",
-                }
-            )
-
-    report = build_extraction_report(
-        results,
-        unmatched_lines,
-        candidate_count,
-        len(lines),
+    output = detect_vegetables_service(
+        text,
+        vegetable_aliases=VEGETABLE_ALIASES,
+        vegetable_tamil_map=VEGETABLE_TAMIL_MAP,
+        noise_line_patterns=NOISE_LINE_PATTERNS,
+        return_details=return_details,
+        confidence_threshold=confidence_match_threshold,
     )
 
-    return (results, report) if return_details else results
-
-
-
-# ============================================================
-# CONSOLIDATION
-# ============================================================
-
-
-def consolidate(df):
-
-    if df.empty:
-        return df
-
-
-    working_df = df.copy()
-
-    working_df["Quantity_Value"] = pd.to_numeric(
-        working_df["Quantity"].astype(str).str.extract(r"(\d+\.?\d*)")[0],
-        errors="coerce",
-    ).fillna(0.0)
-
-    working_df["Unit"] = (
-        working_df["Quantity"]
-        .astype(str)
-        .str.extract(r"\b(KG|KGS|EA|NOS)\b", flags=re.IGNORECASE)[0]
-        .str.upper()
-        .replace({"KGS": "KG", "NOS": "EA"})
-        .fillna("KG")
-    )
-
-    result = (
-        working_df.groupby(["Tamil Name", "Unit"])
-        ["Quantity_Value"]
-        .sum()
-        .reset_index()
-    )
-
-    result.rename(
-        columns={
-            "Quantity_Value": "Total Quantity"
-        },
-        inplace=True
-    )
-
-    return result
-
-
-
-# ============================================================
-# EXPORT FUNCTIONS
-# ============================================================
-
-
-def export_excel(
-    df,
-    logo_path="",
-    header_text="PKS Fresh",
-    above_list_text="காய்கறி பட்டியல்",
-    footer_text="",
-):
-
-    from openpyxl.drawing.image import Image as XLImage
-    from openpyxl.styles import Font
-    from openpyxl.styles import Alignment
-
-    output = io.BytesIO()
-    date_str = date.today().strftime("%d-%m-%Y")
-    tamil_font_name = "Nirmala UI"
-    export_df = df.copy()
-
-    # Keep an extra blank column in downloaded list.
-    if " " not in export_df.columns:
-        export_df[" "] = ""
-
-    date_line_text = f"தேதி: {date_str}"
-    if str(above_list_text or "").strip():
-        date_line_text = f"{date_line_text}    |    {str(above_list_text)}"
-
-    with pd.ExcelWriter(
-        output,
-        engine="openpyxl"
-    ) as writer:
-
-        export_df.to_excel(
-            writer,
-            index=False,
-            sheet_name="Vegetables",
-            startrow=6,
-        )
-
-        ws = writer.sheets["Vegetables"]
-
-        ws["A1"] = str(header_text or "")
-        ws["A3"] = date_line_text
-
-        ws["A1"].font = Font(size=18, bold=True)
-        ws["A3"].font = Font(name=tamil_font_name, size=13)
-
-        ws["A1"].alignment = Alignment(horizontal="left")
-        ws["A3"].alignment = Alignment(horizontal="left")
-
-        ws.column_dimensions["A"].width = 36
-        ws.column_dimensions["B"].width = 10
-        ws.column_dimensions["C"].width = 12
-        ws.column_dimensions["D"].width = 14
-        ws.row_dimensions[3].height = 24
-
-        header_row = 7
-        ws[f"A{header_row}"].font = Font(size=12, bold=True)
-        ws[f"B{header_row}"].font = Font(size=12, bold=True)
-        ws[f"C{header_row}"].font = Font(size=12, bold=True)
-        ws[f"D{header_row}"].font = Font(size=12, bold=True)
-
-        for row_idx in range(header_row + 1, header_row + 1 + len(export_df)):
-            ws[f"A{row_idx}"].font = Font(name=tamil_font_name, size=14)
-            ws[f"A{row_idx}"].alignment = Alignment(wrap_text=True)
-            ws.row_dimensions[row_idx].height = 24
-
-        if str(footer_text or "").strip():
-            footer_row = header_row + 2 + len(export_df)
-            ws[f"A{footer_row}"] = str(footer_text)
-            ws[f"A{footer_row}"].font = Font(name=tamil_font_name, size=12, bold=True)
-            ws[f"A{footer_row}"].alignment = Alignment(horizontal="left", wrap_text=True)
-
-        if logo_path and Path(logo_path).exists():
-            logo_img = XLImage(str(logo_path))
-            logo_img.height = 85
-            logo_img.width = 150
-            ws.add_image(logo_img, "D1")
-
-
-    return output.getvalue()
-
-
-def bytes_to_data_uri(image_bytes, file_name="logo.png"):
-
-    mime_type = mimetypes.guess_type(file_name)[0] or "image/png"
-    encoded = base64.b64encode(image_bytes).decode("ascii")
-    return f"data:{mime_type};base64,{encoded}"
-
-
-def get_default_logo_data_uri():
-
-    candidates = [
-        Path("assets/PKS_Logo.jpeg"),
-        Path("assets/logo.png"),
-        Path("assets/logo.jpg"),
-        Path("assets/logo.jpeg"),
-    ]
-
-    for logo_path in candidates:
-        if logo_path.exists():
-            image_bytes = logo_path.read_bytes()
-            return bytes_to_data_uri(image_bytes, logo_path.name)
-
-    return ""
-
-
-def get_default_logo_path():
-
-    candidates = [
-        Path("assets/PKS_Logo.jpeg"),
-        Path("assets/logo.png"),
-        Path("assets/logo.jpg"),
-        Path("assets/logo.jpeg"),
-    ]
-
-    for logo_path in candidates:
-        if logo_path.exists():
-            return str(logo_path)
-
-    return ""
-
-
-def push_validated_items_to_google_sheet(df):
-
-    if df is None or len(df) == 0:
-        return False, "No validated rows to push."
-
-    if gspread is None or Credentials is None:
-        return False, "Google Sheets libraries are not installed. Add gspread and google-auth dependencies."
-
-    sheet_cfg = st.secrets.get("google_sheet", {})
-    spreadsheet_id = sheet_cfg.get("spreadsheet_id", st.secrets.get("GOOGLE_SHEET_ID", ""))
-    worksheet_name = sheet_cfg.get("worksheet", st.secrets.get("GOOGLE_SHEET_WORKSHEET", "Sheet1"))
-    creds_info = st.secrets.get("gcp_service_account", sheet_cfg.get("service_account", None))
-
-    if not spreadsheet_id:
-        return False, "Google Sheet ID is missing. Configure it in Streamlit secrets."
-
-    if not creds_info:
-        return False, "Service account credentials are missing. Configure gcp_service_account in Streamlit secrets."
-
-    try:
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive",
-        ]
-
-        creds = Credentials.from_service_account_info(dict(creds_info), scopes=scopes)
-        client = gspread.authorize(creds)
-        spreadsheet = client.open_by_key(spreadsheet_id)
-
-        try:
-            worksheet = spreadsheet.worksheet(worksheet_name)
-        except gspread.WorksheetNotFound:
-            worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows=1000, cols=20)
-
-        push_df = df.copy()
-        push_df["Date"] = date.today().isoformat()
-        push_df = push_df.fillna("")
-
-        headers = [str(col) for col in push_df.columns]
-        values = push_df.astype(str).values.tolist()
-
-        existing_header = worksheet.row_values(1)
-        if not existing_header:
-            worksheet.append_row(headers, value_input_option="USER_ENTERED")
-
-        worksheet.append_rows(values, value_input_option="USER_ENTERED")
-
-        return True, f"Pushed {len(values)} row(s) to Google Sheet."
-    except Exception as err:
-        return False, f"Google Sheet push failed: {err}"
-
-
-def get_csv_path_for_date(date_str):
-
-    out_dir = Path("outputs")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    return out_dir / f"validated_{date_str}.csv"
-
-
-def get_daily_csv_path():
-
-    return get_csv_path_for_date(date.today().isoformat())
-
-
-def list_saved_dates():
-
-    out_dir = Path("outputs")
-    if not out_dir.exists():
-        return []
-
-    dates = []
-    for path in out_dir.glob("validated_*.csv"):
-        match = re.match(r"validated_(\d{4}-\d{2}-\d{2})\.csv$", path.name)
-        if match:
-            dates.append(match.group(1))
-
-    return sorted(set(dates), reverse=True)
-
-
-def load_saved_rows_for_date(date_str):
-
-    csv_path = get_csv_path_for_date(date_str)
-    if not csv_path.exists():
-        return pd.DataFrame()
-
-    try:
-        return pd.read_csv(csv_path, dtype=str).fillna("")
-    except Exception:
-        return pd.DataFrame()
-
-
-def load_saved_rows_for_today():
-
-    csv_path = get_daily_csv_path()
-    if not csv_path.exists():
-        return pd.DataFrame()
-
-    try:
-        return pd.read_csv(csv_path, dtype=str).fillna("")
-    except Exception:
-        return pd.DataFrame()
-
-
-def persist_uploaded_image(uploaded_image_file):
-
-    if uploaded_image_file is None:
-        return ""
-
-    date_str = date.today().isoformat()
-    upload_dir = Path("outputs") / "uploads" / date_str
-    upload_dir.mkdir(parents=True, exist_ok=True)
-
-    safe_name = Path(str(uploaded_image_file.name)).name
-    out_path = upload_dir / safe_name
-    out_path.write_bytes(uploaded_image_file.getvalue())
-
-    return str(out_path)
-
-
-def save_validated_items_to_csv(
-    df,
-    source_file,
-    replace_existing=True,
-    target_date=None,
-    upload_type="",
-    uploaded_image_path="",
-):
-
-    if df is None or len(df) == 0:
-        return False, "No validated rows to save."
-
-    date_str = target_date or date.today().isoformat()
-    out_path = get_csv_path_for_date(date_str)
-    source_file = str(source_file or "Unknown_File")
-
-    write_df = df.copy()
-    write_df["Date"] = date_str
-    write_df["Source File"] = source_file
-    write_df["Upload Type"] = str(upload_type or "")
-    write_df["Uploaded Image Path"] = str(uploaded_image_path or "")
-    write_df["Saved At"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    write_df = write_df.fillna("")
-
-    if out_path.exists():
-        existing_df = pd.read_csv(out_path, dtype=str).fillna("")
-    else:
-        existing_df = pd.DataFrame()
-
-    replaced_count = 0
-    if replace_existing and not existing_df.empty and "Source File" in existing_df.columns:
-        replaced_count = int((existing_df["Source File"] == source_file).sum())
-        existing_df = existing_df[existing_df["Source File"] != source_file]
-
-    combined_df = pd.concat([existing_df, write_df], ignore_index=True)
-
-    combined_df.to_csv(out_path, index=False, encoding="utf-8-sig")
-
-    if replaced_count > 0:
-        return True, f"Updated {len(write_df)} row(s) for {source_file} in {out_path}."
-
-    return True, f"Saved {len(write_df)} row(s) for {source_file} to {out_path}."
-
-
-def remove_saved_file_from_csv(target_date, source_file):
-
-    out_path = get_csv_path_for_date(target_date)
-    if not out_path.exists():
-        return False, f"No CSV found for {target_date}."
-
-    existing_df = pd.read_csv(out_path, dtype=str).fillna("")
-    if existing_df.empty or "Source File" not in existing_df.columns:
-        return False, "No removable records found."
-
-    rows_for_file = existing_df[existing_df["Source File"] == source_file].copy()
-    if rows_for_file.empty:
-        return False, f"No rows found for {source_file}."
-
-    filtered_df = existing_df[existing_df["Source File"] != source_file].copy()
-
-    # Clean up persisted uploaded images referenced by removed rows.
-    if "Uploaded Image Path" in rows_for_file.columns:
-        image_paths = rows_for_file["Uploaded Image Path"].astype(str).str.strip().unique().tolist()
-        for img in image_paths:
-            if img and Path(img).exists():
-                try:
-                    Path(img).unlink()
-                except OSError:
-                    pass
-
-    if filtered_df.empty:
-        out_path.unlink(missing_ok=True)
-        return True, f"Removed {len(rows_for_file)} row(s) for {source_file}."
-
-    filtered_df.to_csv(out_path, index=False, encoding="utf-8-sig")
-    return True, f"Removed {len(rows_for_file)} row(s) for {source_file}."
-
-
-
-def export_pdf(
-    df,
-    logo_data_uri="",
-    header_text="PKS Fresh",
-    above_list_text="காய்கறி பட்டியல்",
-    footer_text="",
-):
-    from weasyprint import HTML
-
-    date_str = date.today().strftime("%d-%m-%Y")
-
-    rows_html = ""
-    for i, (_, row) in enumerate(df.iterrows(), start=1):
-        bg = "#f2f2f2" if i % 2 == 0 else "#ffffff"
-        tamil = str(row.get("Tamil Name", ""))
-        total_qty = row.get("Total Quantity", "")
-        unit = str(row.get("Unit", "KG"))
-        try:
-            qty_val = float(total_qty)
-            qty_str = f"{qty_val:.0f}" if qty_val == int(qty_val) else f"{qty_val:.2f}"
-        except (ValueError, TypeError):
-            qty_str = str(total_qty)
-        rows_html += (
-            f'<tr style="background:{bg}">'
-            f"<td>{i}</td>"
-            f"<td>{tamil}</td>"
-            f'<td class="num">{qty_str}</td>'
-            f'<td class="num">{unit}</td>'
-            "<td></td>"
-            "</tr>"
-        )
-
-    logo_html = ""
-    if logo_data_uri:
-        logo_html = (
-            '<div class="brand-logo-wrap">'
-            f'<img class="brand-logo" src="{logo_data_uri}" alt="Company Logo" />'
-            "</div>"
-        )
-
-    html_content = f"""<!DOCTYPE html>
-<html lang="ta">
-<head>
-<meta charset="UTF-8">
-<style>
-  @font-face {{
-    font-family: 'TamilFont';
-        src: local('Noto Sans Tamil'), local('Lohit Tamil'), local('Tamil Sangam MN'), local('Tamil MN');
-  }}
-  body {{
-        font-family: 'Noto Sans Tamil', 'Lohit Tamil', 'Tamil Sangam MN', 'Tamil MN', serif;
-    margin: 40px;
-    color: #111;
-  }}
-  h1 {{
-    text-align: center;
-    font-size: 26px;
-    margin-bottom: 4px;
-    letter-spacing: 1px;
-  }}
-    .brand-logo-wrap {{
-        text-align: center;
-        margin-bottom: 10px;
-    }}
-    .brand-logo {{
-        max-height: 90px;
-        max-width: 180px;
-        object-fit: contain;
-    }}
-  .subtitle {{
-    text-align: center;
-    font-size: 13px;
-    color: #555;
-    margin-bottom: 4px;
-  }}
-  .date-line {{
-        text-align: left;
-    font-size: 11px;
-    color: #444;
-    margin-bottom: 14px;
-  }}
-  table {{
-    width: 100%;
-    border-collapse: collapse;
-  }}
-  thead tr {{
-    background: #2c3e50;
-    color: #fff;
-  }}
-  th {{
-    padding: 9px 14px;
-    font-size: 13px;
-    text-align: left;
-  }}
-  th.num {{ text-align: right; }}
-  td {{
-    padding: 8px 14px;
-    font-size: 13px;
-    border-bottom: 1px solid #ddd;
-  }}
-  td.num {{ text-align: right; }}
-  tfoot td {{
-    font-weight: bold;
-    border-top: 2px solid #2c3e50;
-    padding: 8px 14px;
-    font-size: 12px;
-  }}
-    .footer-note {{
-        margin-top: 14px;
-        font-size: 12px;
-        color: #222;
-        font-weight: 600;
-    }}
-</style>
-</head>
-<body>
-    {logo_html}
-    <h1>{str(header_text or '')}</h1>
-    <div class="subtitle">காய்கறி பட்டியல்</div>
-    <div class="date-line">{str(above_list_text or '')}  &nbsp;&nbsp; &nbsp;&nbsp;  தேதி: {date_str}</div>
-  <table>
-    <thead>
-      <tr>
-        <th>#</th>
-        <th>காய்கறி பெயர்</th>
-        <th class="num">அளவு</th>
-        <th class="num">அலகு</th>
-                <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {rows_html}
-    </tbody>
-    <tfoot>
-      <tr>
-                <td colspan="3">மொத்தம் {len(df)} பொருட்கள்</td>
-                <td class="num" colspan="2"></td>
-      </tr>
-    </tfoot>
-  </table>
-    <div class="footer-note">{str(footer_text or '')}</div>
-</body>
-</html>"""
-
-    output = io.BytesIO()
-    HTML(string=html_content).write_pdf(output)
-    return output.getvalue()
+    if return_details:
+        items, report = output
+        items = apply_confidence_policy(items, auto_extract_threshold=confidence_auto_extract_threshold)
+        return items, report
+
+    return apply_confidence_policy(output, auto_extract_threshold=confidence_auto_extract_threshold)
 
 
 def get_download_text_customization(scope_key):
@@ -1204,6 +374,12 @@ with tab_primary:
         ]
     )
 
+    st.session_state["active_client_name"] = st.text_input(
+        "Client Name",
+        value=st.session_state.get("active_client_name", ""),
+        help="Saved to CSV and used in download headers.",
+    ).strip()
+
     if uploaded_file:
         filename = uploaded_file.name.lower()
         st.session_state["active_source_file"] = uploaded_file.name
@@ -1230,14 +406,13 @@ with tab_primary:
                 st.warning(image_error)
             else:
                 st.session_state.raw_text = image_text
+                st.success("OCR completed")
 
-                st.subheader(
-                    "Extracted Image Text"
-                )
-
+            if st.session_state.raw_text:
+                st.subheader("Extracted Image Text")
                 st.text_area(
                     "Text",
-                    image_text,
+                    st.session_state.raw_text,
                     height=250
                 )
 
@@ -1261,6 +436,22 @@ with tab_primary:
             st.dataframe(df, use_container_width=True)
 
             st.session_state.raw_text = df.to_string()
+
+    with st.expander("Confidence Controls", expanded=False):
+        st.session_state["confidence_match_threshold"] = st.slider(
+            "Minimum OCR name-match confidence (%)",
+            min_value=50,
+            max_value=95,
+            value=int(st.session_state.get("confidence_match_threshold", 75)),
+            help="Rows below this fuzzy-match score are not auto-mapped to a vegetable.",
+        )
+        st.session_state["confidence_auto_extract_threshold"] = st.slider(
+            "Auto-extract status threshold (%)",
+            min_value=60,
+            max_value=99,
+            value=int(st.session_state.get("confidence_auto_extract_threshold", 90)),
+            help="Rows below this score are marked as Needs Review even when quantity is present.",
+        )
 
     if st.button("🔍 Extract Vegetables"):
         items, extraction_report = detect_vegetables(
@@ -1394,6 +585,7 @@ with tab_primary:
                 replace_existing=True,
                 upload_type=st.session_state.get("active_upload_type", ""),
                 uploaded_image_path=st.session_state.get("active_uploaded_image_path", ""),
+                client_name=st.session_state.get("active_client_name", ""),
             )
             if csv_ok:
                 st.info(csv_msg)
@@ -1401,7 +593,12 @@ with tab_primary:
                 st.warning(csv_msg)
 
             if st.session_state.get("push_gsheet_on_confirm", False):
-                push_ok, push_msg = push_validated_items_to_google_sheet(edited_df)
+                push_ok, push_msg = push_validated_items_to_google_sheet(
+                    edited_df,
+                    secrets=st.secrets,
+                    gspread_module=gspread,
+                    credentials_cls=Credentials,
+                )
                 if push_ok:
                     st.info(push_msg)
                 else:
@@ -1420,6 +617,7 @@ with tab_primary:
                 header_text=dl_header,
                 above_list_text=dl_above,
                 footer_text=dl_footer,
+                client_name=st.session_state.get("active_client_name", ""),
             )
             confirmed_pdf = export_pdf(
                 confirmed_df,
@@ -1427,6 +625,7 @@ with tab_primary:
                 header_text=dl_header,
                 above_list_text=dl_above,
                 footer_text=dl_footer,
+                client_name=st.session_state.get("active_client_name", ""),
             )
 
             st.download_button(
@@ -1489,15 +688,21 @@ with tab_saved:
                     selected_df = saved_by_date_df[saved_by_date_df["Source File"] == selected_saved_file].copy()
 
                     img_path = ""
+                    client_name = ""
                     if "Uploaded Image Path" in selected_df.columns and not selected_df.empty:
                         img_path = str(selected_df["Uploaded Image Path"].iloc[0]).strip()
+                    if "Client Name" in selected_df.columns and not selected_df.empty:
+                        client_name = str(selected_df["Client Name"].iloc[0]).strip()
+
+                    if client_name:
+                        st.info(f"Client Name: {client_name}")
 
                     if selected_saved_date == date.today().isoformat() and img_path and Path(img_path).exists():
                         st.image(img_path, caption=f"Uploaded image: {selected_saved_file}", use_container_width=True)
 
                     display_cols = [
                         col
-                        for col in ["Source Name", "Tamil Name", "Quantity", "Status", "Confidence"]
+                        for col in ["Client Name", "Source Name", "Tamil Name", "Quantity", "Status", "Confidence"]
                         if col in selected_df.columns
                     ]
 
@@ -1533,6 +738,7 @@ with tab_saved:
                             target_date=selected_saved_date,
                             upload_type=upload_type,
                             uploaded_image_path=img_path,
+                            client_name=client_name,
                         )
                         if upd_ok:
                             st.success(upd_msg)
@@ -1563,6 +769,7 @@ with tab_saved:
                         header_text=dl_header,
                         above_list_text=dl_above,
                         footer_text=dl_footer,
+                        client_name=client_name,
                     )
                     individual_pdf = export_pdf(
                         individual_df,
@@ -1570,6 +777,7 @@ with tab_saved:
                         header_text=dl_header,
                         above_list_text=dl_above,
                         footer_text=dl_footer,
+                        client_name=client_name,
                     )
 
                     st.download_button(
@@ -1612,7 +820,29 @@ with tab_consolidated:
             if saved_by_date_df.empty:
                 st.caption("No rows found for selected date.")
             else:
-                final_df = consolidate(saved_by_date_df)
+                include_client_columns = st.checkbox(
+                    "Include client-wise columns in consolidated downloads",
+                    value=False,
+                    key="include_client_columns_consolidated",
+                    help="Adds one quantity column per client in consolidated output.",
+                )
+
+                if include_client_columns:
+                    final_df = consolidate_with_client_columns(saved_by_date_df)
+                else:
+                    final_df = consolidate(saved_by_date_df)
+
+                consolidated_clients = []
+                if "Client Name" in saved_by_date_df.columns:
+                    consolidated_clients = [
+                        name
+                        for name in sorted(saved_by_date_df["Client Name"].astype(str).str.strip().unique().tolist())
+                        if name
+                    ]
+                consolidated_client_name = ", ".join(consolidated_clients)
+
+                if consolidated_client_name:
+                    st.info(f"Client Name(s): {consolidated_client_name}")
 
                 st.dataframe(final_df, use_container_width=True)
 
@@ -1624,6 +854,7 @@ with tab_consolidated:
                     header_text=dl_header,
                     above_list_text=dl_above,
                     footer_text=dl_footer,
+                    client_name=consolidated_client_name,
                 )
 
                 pdf_file = export_pdf(
@@ -1632,6 +863,7 @@ with tab_consolidated:
                     header_text=dl_header,
                     above_list_text=dl_above,
                     footer_text=dl_footer,
+                    client_name=consolidated_client_name,
                 )
 
                 st.download_button(
