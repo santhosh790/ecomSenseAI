@@ -102,15 +102,15 @@ def extract_image_text(image, ocr_model=None):
     try:
         text = pytesseract.image_to_string(sharpened)
     except pytesseract.pytesseract.TesseractNotFoundError:
-        return "", ocr_error or (
+        return "", (
             "Tesseract OCR binary is not installed on this system. "
             "For Streamlit Cloud, add a packages.txt with 'tesseract-ocr'. "
             "For macOS, run: brew install tesseract"
         )
     except pytesseract.pytesseract.TesseractError as err:
-        return "", f"OCR failed: {err}"
+        return "", f"Tesseract OCR failed: {err}"
 
     if not text.strip():
-        return "", ocr_error or "No text detected in image. Try a clearer image or higher resolution scan."
+        return "", "No text detected in image. Try a clearer image or higher resolution scan."
 
     return text, ""

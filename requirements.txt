@@ -1,4 +1,6 @@
 # Direct dependencies
+--extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cpu/
+
 streamlit==1.60.0
 pandas==2.2.2
 numpy==1.26.4
@@ -8,6 +10,7 @@ pytesseract==0.3.13
 opencv-python-headless
 rapidfuzz==3.14.1
 paddleocr==2.8.1
+paddlepaddle==3.3.0 ; platform_system == "Linux" and python_version >= "3.11" and python_version < "3.12"
 openpyxl==3.1.5
 weasyprint==69.0
 gspread==6.2.1

@@ -10,7 +10,11 @@ from application.vegetable_catalog_service import load_vegetable_catalog
 from application.reporting_service import consolidate, consolidate_with_client_columns, export_excel, export_pdf
 from application.extraction_service import normalize_text as normalize_text_service
 from infrastructure.assets_service import get_default_logo_data_uri, get_default_logo_path
-from infrastructure.document_readers import read_excel, read_image, read_pdf
+from infrastructure.document_readers import (
+    read_excel,
+    read_image,
+    read_pdf,
+)
 from infrastructure.google_sheets_service import push_validated_items_to_google_sheet
 from infrastructure.ocr_engine import extract_image_text as extract_image_text_service
 from infrastructure.ocr_engine import load_ocr_model
@@ -100,11 +104,26 @@ if "download_footer_text" not in st.session_state:
 if "active_client_name" not in st.session_state:
     st.session_state["active_client_name"] = ""
 
+if "parser_selection" not in st.session_state:
+    st.session_state["parser_selection"] = "Generic"
+
 if "confidence_auto_extract_threshold" not in st.session_state:
     st.session_state["confidence_auto_extract_threshold"] = 90
 
 if "confidence_match_threshold" not in st.session_state:
     st.session_state["confidence_match_threshold"] = 75
+
+if "active_upload_signature" not in st.session_state:
+    st.session_state["active_upload_signature"] = ""
+
+if "pdf_source_text" not in st.session_state:
+    st.session_state["pdf_source_text"] = ""
+
+if "pdf_detected_tables" not in st.session_state:
+    st.session_state["pdf_detected_tables"] = []
+
+if "pdf_mapped_rows" not in st.session_state:
+    st.session_state["pdf_mapped_rows"] = []
 
 
 # ============================================================
@@ -130,15 +149,24 @@ def find_canonical_vegetable_name(text):
     )
 
 
-def detect_vegetables(text, return_details=False):
+def detect_vegetables(text, return_details=False, parser_selection=None):
     confidence_match_threshold = int(st.session_state.get("confidence_match_threshold", 75))
     confidence_auto_extract_threshold = int(st.session_state.get("confidence_auto_extract_threshold", 90))
+    
+    # Use parser_selection if provided, otherwise use from session state
+    if parser_selection is None:
+        parser_selection = st.session_state.get("parser_selection", "Generic")
+    
+    # Map parser selection to client_name parameter
+    # Generic = None (auto-detect), VIT/FVIT = pass as client_name
+    client_name = None if parser_selection == "Generic" else parser_selection
 
     return detect_vegetables_service(
         text,
         return_details=return_details,
         confidence_threshold=confidence_match_threshold,
         auto_extract_threshold=confidence_auto_extract_threshold,
+        client_name=client_name,
     )
 
 
@@ -213,11 +241,52 @@ with tab_primary:
     st.session_state["active_client_name"] = st.text_input(
         "Client Name",
         value=st.session_state.get("active_client_name", ""),
-        help="Saved to CSV and used in download headers.",
+        help="Enter the actual client name (e.g., 'MRF', 'VIT Canteen'). Saved to CSV for record-keeping.",
+        placeholder="Enter client name",
     ).strip()
+    
+    # Parser selection dropdown
+    parser_options = ["Generic", "VIT", "FVIT"]
+    st.session_state["parser_selection"] = st.selectbox(
+        "Parser Strategy",
+        options=parser_options,
+        index=parser_options.index(st.session_state.get("parser_selection", "Generic")),
+        help="Select the parsing strategy for extraction. Generic works for most formats.",
+    )
+    
+    # Show supported parsers information in an expander
+    with st.expander("ℹ️ Parser Strategy Information"):
+        st.markdown("""
+        **Available Parsers:**
+        
+        - **Generic** (Default): Works with most purchase order formats
+          - Handles various column layouts
+          - Automatically corrects OCR errors (Ko/Ke/Kq → KG)
+          - Recommended for most documents
+        
+        - **VIT**: Optimized for VIT Purchase Orders
+          - 11-12 column format
+          - Includes item codes (6-7 digits)
+          - Pattern: Serial | ItemCode | Material | HSN-UOM-Qty
+        
+        - **FVIT**: Optimized for FVIT Purchase Orders
+          - 8 column format
+          - Pattern: Serial | Material | HSN | UOM | Qty
+        
+        **Tips:**
+        - Start with **Generic** - it handles most documents well
+        - Switch to VIT/FVIT if Generic doesn't extract properly
+        - The system automatically handles common OCR errors
+        """)
 
     if uploaded_file:
         filename = uploaded_file.name.lower()
+        current_signature = f"{uploaded_file.name}:{getattr(uploaded_file, 'size', 0)}"
+        is_new_upload = st.session_state.get("active_upload_signature") != current_signature
+
+        if is_new_upload:
+            st.session_state["active_upload_signature"] = current_signature
+
         st.session_state["active_source_file"] = uploaded_file.name
 
         st.success(
@@ -256,11 +325,12 @@ with tab_primary:
             st.session_state["active_upload_type"] = "pdf"
             st.session_state["active_uploaded_image_path"] = ""
 
-            text = read_pdf(uploaded_file)
-            st.session_state.raw_text = text
+            if is_new_upload:
+                st.session_state["pdf_source_text"] = read_pdf(uploaded_file)
+                st.session_state.raw_text = st.session_state["pdf_source_text"]
 
             st.subheader("Extracted PDF Text")
-            st.text_area("Text", text, height=250)
+            st.text_area("Text", st.session_state.raw_text, height=250, key="pdf_text_display")
 
         elif filename.endswith(".xlsx"):
             st.session_state["active_upload_type"] = "excel"
@@ -290,13 +360,33 @@ with tab_primary:
         )
 
     if st.button("🔍 Extract Vegetables"):
+        client_name = st.session_state.get("active_client_name", "")
+        parser_selection = st.session_state.get("parser_selection", "Generic")
+        
+        # Always use raw text extraction with selected parser
         items, extraction_report = detect_vegetables(
             st.session_state.raw_text,
             return_details=True,
+            parser_selection=parser_selection,
         )
 
         st.session_state["items"] = items
         st.session_state["extraction_report"] = extraction_report
+
+        # Display parser strategy and extraction stats
+        parser_strategy = extraction_report.get("parser_strategy", "unknown")
+        vit_activated = extraction_report.get("vit_mode_activated", False)
+        vit_reason = extraction_report.get("vit_activation_reason", "")
+        
+        # Show parser info
+        parser_display = parser_selection if parser_selection != "Generic" else parser_strategy.upper()
+        status_icon = "🎯" if parser_selection != "Generic" else "🔍"
+        
+        st.info(
+            f"{status_icon} **Parser Used:** {parser_display} | "
+            f"**Extracted:** {len(items)} items | "
+            f"**Parser Selection:** {parser_selection}"
+        )
 
         if items:
             st.success(f"{len(items)} vegetables detected")
@@ -381,6 +471,9 @@ with tab_primary:
             st.markdown("### Extraction Quality")
 
             report = st.session_state.get("extraction_report", {})
+
+            parser_strategy = str(report.get("parser_strategy", "generic")).strip() or "generic"
+            st.caption(f"Parser strategy: {parser_strategy}")
 
             st.metric("Candidate Rows", report.get("candidate_lines", 0))
             st.metric("Extracted Rows", report.get("extracted_rows", 0))

@@ -2,6 +2,7 @@ import unittest
 
 from application.extraction_service import apply_confidence_policy
 from application.extraction_service import detect_vegetables
+from application.extraction_service import detect_vegetables_from_mapped_rows
 from application.extraction_service import extract_row_fields
 from application.extraction_service import extract_row_quantity
 from application.extraction_service import fuzzy_match_vegetable_name
@@ -21,6 +22,12 @@ VEGETABLE_ALIASES = {
     "BABY CORN PEELED": "BABY CORN",
     "BABY CORN": "BABY CORN",
     "MANGALORE CUCUMBER": "MANGALORE CUCUMBER",
+    "GINGER": "GINGER",
+    "GINGER FRESH": "GINGER",
+    "SPRING ONION": "SPRING ONION",
+    "SOWTHEKAI": "MANGALORE CUCUMBER",
+    "MOSSAMBI": "MOSSAMBI",
+    "SWEET LIME": "MOSSAMBI",
 }
 
 VEGETABLE_TAMIL_MAP = {
@@ -33,6 +40,9 @@ VEGETABLE_TAMIL_MAP = {
     "CURRY LEAVES": "கறிவேப்பிலை",
     "BABY CORN": "பேபி கார்ன்",
     "MANGALORE CUCUMBER": "மங்களூர் வெள்ளரி",
+    "GINGER": "இஞ்சி",
+    "SPRING ONION": "ஸ்ப்ரிங் ஆனியன்",
+    "MOSSAMBI": "சாத்துக்குடி",
 }
 
 NOISE_LINE_PATTERNS = [
@@ -48,6 +58,13 @@ class ExtractionServiceTests(unittest.TestCase):
 
         self.assertIn("CORINDER", material)
         self.assertEqual(qty, "45 KG")
+
+    def test_extract_row_fields_table_qty_before_unit_keeps_decimal_qty(self):
+        line = "15 GINGER FRESH 1.5 Kgs 43.00 64.50"
+        material, qty = extract_row_fields(line)
+
+        self.assertIn("GINGER", material.upper())
+        self.assertEqual(qty, "1.5 KG")
 
     def test_fuzzy_match_common_ocr_typo(self):
         matched, score = fuzzy_match_vegetable_name(
@@ -243,6 +260,160 @@ class ExtractionServiceTests(unittest.TestCase):
         self.assertEqual(qty_by_name.get("Onion"), "200 KG")
         self.assertEqual(qty_by_name.get("Tomato"), "1 KG")
         self.assertGreaterEqual(report["with_quantity"], 2)
+
+    def test_detect_vegetables_collapsed_multi_item_line_pairs_qty_correctly(self):
+        text = "1 ONION 50 KG 2 TOMATO 40 KG"
+
+        items, report = detect_vegetables(
+            text,
+            vegetable_aliases=VEGETABLE_ALIASES,
+            vegetable_tamil_map=VEGETABLE_TAMIL_MAP,
+            noise_line_patterns=NOISE_LINE_PATTERNS,
+            return_details=True,
+            confidence_threshold=70,
+        )
+
+        qty_by_name = {row["Source Name"]: row["Quantity"] for row in items}
+        self.assertEqual(qty_by_name.get("Onion"), "50 KG")
+        self.assertEqual(qty_by_name.get("Tomato"), "40 KG")
+        self.assertEqual(report["with_quantity"], 2)
+
+    def test_detect_vegetables_from_mapped_rows_uses_selected_qty(self):
+        mapped_rows = [
+            {"item": "ONION_KG", "qty": "200", "unit": "Kg"},
+            {"item": "TOMATO COUNTRY_1X1 KG", "qty": "120", "unit": "Kg"},
+            {"item": "Value Total", "qty": "27,214.00", "unit": ""},
+        ]
+
+        items, report = detect_vegetables_from_mapped_rows(
+            mapped_rows,
+            vegetable_aliases=VEGETABLE_ALIASES,
+            vegetable_tamil_map=VEGETABLE_TAMIL_MAP,
+            return_details=True,
+            confidence_threshold=70,
+        )
+
+        qty_by_name = {row["Source Name"]: row["Quantity"] for row in items}
+        self.assertEqual(qty_by_name.get("Onion"), "200 KG")
+        self.assertEqual(qty_by_name.get("Tomato"), "120 KG")
+        self.assertEqual(report["with_quantity"], 2)
+
+    def test_detect_vegetables_raw_text_does_not_take_rate_as_qty_for_alias_variants(self):
+        text = "\n".join(
+            [
+                "22 1100051 MANGALORE CUCUMBER 132.00",
+                "(SOWTHEKAI)",
+                "6 Kgs 22.00",
+                "34 1200010 MOSSAMBI [SWEET LIME] 4 Kgs 45.00 180.00",
+            ]
+        )
+
+        items, report = detect_vegetables(
+            text,
+            vegetable_aliases=VEGETABLE_ALIASES,
+            vegetable_tamil_map=VEGETABLE_TAMIL_MAP,
+            noise_line_patterns=NOISE_LINE_PATTERNS,
+            return_details=True,
+            confidence_threshold=70,
+        )
+
+        qty_by_name = {row["Source Name"]: row["Quantity"] for row in items}
+        self.assertEqual(qty_by_name.get("Mangalore Cucumber"), "6 KG")
+        self.assertEqual(qty_by_name.get("Mossambi"), "4 KG")
+        self.assertNotIn("22.00 KG", {row["Quantity"] for row in items})
+        self.assertNotIn("45.00 KG", {row["Quantity"] for row in items})
+        self.assertGreaterEqual(report["with_quantity"], 2)
+
+    def test_detect_vegetables_raw_text_wrapped_description_with_hsn_line(self):
+        text = "\n".join(
+            [
+                "10 206607 ONION",
+                "BIG_UB_1X1KG",
+                "07122000 KG 150.000 31.00 0 0 0 4,650",
+                "20 206610 POTATO",
+                "LARGE_UB_1X1",
+                "KG",
+                "07122000 KG 100.000 20.00 0 0 0 2,000",
+                "90 206586 GINGER",
+                "FRESH_UB_1X1",
+                "KG",
+                "08055000 KG 8.000 115.00 0 0 0 920",
+                "160 206930 SPRING",
+                "ONION_UB_1X1",
+                "NOS",
+                "07099990 EA 10.000 10.00 0 0 0.00 100.000",
+            ]
+        )
+
+        items, report = detect_vegetables(
+            text,
+            vegetable_aliases=VEGETABLE_ALIASES,
+            vegetable_tamil_map=VEGETABLE_TAMIL_MAP,
+            noise_line_patterns=NOISE_LINE_PATTERNS,
+            return_details=True,
+            confidence_threshold=70,
+        )
+
+        qty_by_name = {row["Source Name"]: row["Quantity"] for row in items}
+        self.assertEqual(qty_by_name.get("Onion"), "150 KG")
+        self.assertEqual(qty_by_name.get("Potato"), "100 KG")
+        self.assertEqual(qty_by_name.get("Ginger"), "8 KG")
+        self.assertEqual(qty_by_name.get("Spring Onion"), "10 EA")
+        self.assertGreaterEqual(report["with_quantity"], 4)
+
+    def test_detect_vegetables_vit_layout_special_regex(self):
+        text = "\n".join(
+            [
+                "Purchase Order",
+                "Vendor Code 405485",
+                "PO Number 8110170328",
+                "Delivery address VELLORE INSTITUTE OF TECHNOLOGY",
+                "S.N",
+                "Material",
+                "Code",
+                "Description HSN/SAC UOM Quantity Price per UOM",
+                "10 206607 ONION",
+                "BIG_UB_1X1KG",
+                "07122000 KG 150.000 31.00 0 0 0 4,650",
+                "90 206586 GINGER",
+                "FRESH_UB_1X1",
+                "KG",
+                "08055000 KG 8.000 115.00 0 0 0 920",
+                "160 206930 SPRING",
+                "ONION_UB_1X1",
+                "NOS",
+                "07099990 EA 10.000 10.00 0 0 0.00 100.000",
+                "190 206606 MUSHROOM",
+                "BUTTON",
+                "FRESH_UB_1X1",
+                "KG",
+                "07104000_",
+                "A",
+                "KG 20.000 200.00 0 0 0 4,000",
+                "200 206611 RADISH",
+                "WHITE_UB_1X1K",
+                "G",
+                "08039010 KG 6.000 22.00 0 0 0 132",
+                "Gross Amount (INR): 0.000 23,737.00",
+            ]
+        )
+
+        items, report = detect_vegetables(
+            text,
+            vegetable_aliases=VEGETABLE_ALIASES,
+            vegetable_tamil_map=VEGETABLE_TAMIL_MAP,
+            noise_line_patterns=NOISE_LINE_PATTERNS,
+            return_details=True,
+            confidence_threshold=70,
+        )
+
+        qty_by_name = {row["Source Name"]: row["Quantity"] for row in items}
+        self.assertEqual(qty_by_name.get("Onion"), "150 KG")
+        self.assertEqual(qty_by_name.get("Ginger"), "8 KG")
+        self.assertEqual(qty_by_name.get("Spring Onion"), "10 EA")
+        self.assertEqual(report["with_quantity"], 3)
+        self.assertEqual(report["extracted_rows"], 3)
+        self.assertEqual(report.get("parser_strategy"), "vit-special")
 
 
 if __name__ == "__main__":
