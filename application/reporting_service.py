@@ -225,10 +225,10 @@ def export_pdf(
         rows_html += (
             f'<tr style="background:{bg}">'
             f"<td>{i}</td>"
-            f"<td>{tamil}</td>"
+            f"<td><b>{tamil}</b></td>"
             f"{client_cells}"
-            f'<td class="num">{qty_str}</td>'
-            f'<td class="num">{unit}</td>'
+            f'<td class="num"><b>{qty_str}</b></td>'
+            f'<td class="num"><b>{unit}</b></td>'
             "</tr>"
         )
 
@@ -273,7 +273,7 @@ def export_pdf(
     }}
   .subtitle {{
     text-align: center;
-    font-size: 13px;
+    font-size: 16px;
     color: #555;
     margin-bottom: 4px;
   }}
@@ -293,20 +293,20 @@ def export_pdf(
   }}
   th {{
     padding: 9px 14px;
-    font-size: 13px;
+    font-size: 16px;
     text-align: left;
   }}
   th.num {{ text-align: right; }}
   td {{
     padding: 8px 14px;
-    font-size: 13px;
+    font-size: 16px;
     border-bottom: 1px solid #ddd;
   }}
   td.num {{ text-align: right; }}
   tfoot td {{
     font-weight: bold;
     border-top: 2px solid #2c3e50;
-    padding: 8px 14px;
+    padding: 8px 16px;
     font-size: 12px;
   }}
     .footer-note {{
