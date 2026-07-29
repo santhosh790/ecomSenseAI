@@ -1,4 +1,4 @@
-
+/docs
 
 .venv
 
@@ -9,3 +9,16 @@ __pycache__/
 .DS_Store
 
 .venv_new
+
+infrastructure/ocr_handwriting_huggingface.py
+infrastructure/ocr_handwriting_poc.py
+outputs/
+requirements_handwriting.txt
+test_sambar_debug.py
+test_sambar_final.py
+test_sambar_onion.py
+tests/print_tamil.jpeg
+tests/tamil_test.jpeg
+tests/test_handwriting_setup.py
+tests/test_handwritten_english.png
+tests/test_tamil_paddle.py

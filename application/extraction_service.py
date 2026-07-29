@@ -454,8 +454,12 @@ def build_fvit_row_candidates(lines):
         found_uom = False
         found_qty = False
         
-        # Scan next 5 lines for HSN, UOM, Qty
-        for offset in range(5):
+        # FVIT Format Variants:
+        # Variant 1 (Original): Material → HSN → UOM → Quantity
+        # Variant 2 (New): Material → UOM → HSN → UOM → Quantity
+        
+        # Scan next 6 lines for HSN, UOM, Qty (increased from 5 to 6 to handle variant 2)
+        for offset in range(6):
             if scan_idx + offset >= total:
                 break
             
@@ -470,24 +474,35 @@ def build_fvit_row_candidates(lines):
             
             # Check for next serial (row boundary)
             if re.match(r"^\d{1,3}$", scan_line) and offset > 2:
+                # Could be quantity if we already found UOM
+                if found_uom and not found_qty:
+                    qty = normalize_quantity_number(scan_line)
+                    found_qty = True
+                    break
+                # Otherwise it's next row
                 break
             
-            # Try to find HSN (6-8 digits)
-            if not found_hsn and re.match(r"^\d{6,8}$", scan_line):
-                hsn = scan_line
-                found_hsn = True
-                continue
-            
-            # Try to find UOM
-            if found_hsn and not found_uom and re.match(r"^(KG|KGS|Kg|Kgs|EA|NOS|Nos)\.?$", scan_line, re.IGNORECASE):
+            # Try to find UOM first (for variant 2 where UOM comes before HSN)
+            if not found_uom and re.match(r"^(KG|KGS|Kg|Kgs|EA|NOS|Nos)\.?$", scan_line, re.IGNORECASE):
                 uom = scan_line.upper()
                 if uom in ["KGS", "KG"]:
                     uom = "KG"
                 found_uom = True
                 continue
             
+            # Try to find HSN (6-8 digits) - can come before or after UOM
+            if not found_hsn and re.match(r"^\d{6,8}$", scan_line):
+                hsn = scan_line
+                found_hsn = True
+                continue
+            
+            # Try to find UOM again (for variant 2 where UOM appears twice)
+            if found_hsn and found_uom and re.match(r"^(KG|KGS|Kg|Kgs|EA|NOS|Nos)\.?$", scan_line, re.IGNORECASE):
+                # Skip duplicate UOM, just continue
+                continue
+            
             # Try to find Quantity (pure number)
-            if found_uom and not found_qty and re.match(r"^\d+(?:\.\d+)?$", scan_line):
+            if found_hsn and found_uom and not found_qty and re.match(r"^\d+(?:\.\d+)?$", scan_line):
                 qty = normalize_quantity_number(scan_line)
                 found_qty = True
                 break
@@ -498,7 +513,7 @@ def build_fvit_row_candidates(lines):
             # Build candidate in format: "serial material hsn uom qty"
             candidates.append(f"{serial} {material} {hsn} {uom} {qty}")
             # Move past this row
-            idx = scan_idx + 5
+            idx = scan_idx + 6
         else:
             idx += 1
     

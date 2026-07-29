@@ -202,9 +202,9 @@ def get_download_text_customization(scope_key):
 # ============================================================
 
 
-st.title("🥕 VegSense AI")
+st.title("🛒 ecomSense AI")
 st.subheader(
-    "Multilingual Vegetable Document Extractor"
+    "Multilingual Grocery Document Extractor"
 )
 
 st.session_state["print_logo_data_uri"] = get_default_logo_data_uri()
@@ -349,7 +349,7 @@ with tab_primary:
             min_value=50,
             max_value=95,
             value=int(st.session_state.get("confidence_match_threshold", 75)),
-            help="Rows below this fuzzy-match score are not auto-mapped to a vegetable.",
+            help="Rows below this fuzzy-match score are not auto-mapped to a grocery item.",
         )
         st.session_state["confidence_auto_extract_threshold"] = st.slider(
             "Auto-extract status threshold (%)",
@@ -359,7 +359,7 @@ with tab_primary:
             help="Rows below this score are marked as Needs Review even when quantity is present.",
         )
 
-    if st.button("🔍 Extract Vegetables"):
+    if st.button("🔍 Extract Groceries"):
         client_name = st.session_state.get("active_client_name", "")
         parser_selection = st.session_state.get("parser_selection", "Generic")
         
@@ -389,9 +389,9 @@ with tab_primary:
         )
 
         if items:
-            st.success(f"{len(items)} vegetables detected")
+            st.success(f"{len(items)} items detected")
         else:
-            st.warning("No vegetables detected")
+            st.warning("No items detected")
 
     if st.session_state["items"]:
         st.subheader("✏️ Validate Extraction")
@@ -399,11 +399,14 @@ with tab_primary:
         try:
             items_list = list(st.session_state["items"]) if st.session_state["items"] else []
             df = pd.DataFrame(items_list)
+            # Add a "Delete" column for row-level removal
+            if not df.empty and "Delete" not in df.columns:
+                df.insert(0, "Delete", False)
         except (ValueError, TypeError) as e:
             st.error(f"Error creating table: {e}")
-            df = pd.DataFrame(columns=["Source Name", "Tamil Name", "Quantity", "Status"])
+            df = pd.DataFrame(columns=["Delete", "Source Name", "Tamil Name", "Quantity", "Status"])
 
-        with st.expander("➕ Add Missing Vegetable", expanded=False):
+        with st.expander("➕ Add Missing Item", expanded=False):
             st.caption("Pick a known English name (or use custom) to auto-map Tamil and append a new row.")
 
             alias_options = sorted({alias.title() for alias in VEGETABLE_CATALOG.vegetable_aliases.keys()})
@@ -492,10 +495,29 @@ with tab_primary:
                 st.caption("No unmatched candidate lines detected.")
 
         with right_col:
+            st.caption("💡 Tip: Check the 'Delete' box to remove unwanted rows from final export")
             edited_df = st.data_editor(
                 df,
-                use_container_width=True
+                use_container_width=True,
+                column_config={
+                    "Delete": st.column_config.CheckboxColumn(
+                        "🗑️ Delete",
+                        help="Check to remove this row from final export",
+                        default=False,
+                    )
+                },
+                hide_index=True,
             )
+        
+        # Show deletion summary
+        if not edited_df.empty and "Delete" in edited_df.columns:
+            rows_marked_for_deletion = edited_df["Delete"].sum()
+            rows_to_keep = len(edited_df) - rows_marked_for_deletion
+            
+            if rows_marked_for_deletion > 0:
+                st.warning(f"⚠️ {rows_marked_for_deletion} row(s) marked for deletion | {rows_to_keep} row(s) will be saved")
+            else:
+                st.info(f"📊 All {len(edited_df)} row(s) will be saved (no deletions)")
 
         st.checkbox(
             "Also push confirmed rows to Google Sheet",
@@ -504,12 +526,24 @@ with tab_primary:
         )
 
         if st.button("✅ Confirm"):
-            st.session_state["validated_items"] = edited_df
-            st.success("Validated successfully")
+            # Filter out rows marked for deletion
+            if "Delete" in edited_df.columns:
+                rows_to_delete = edited_df["Delete"].sum() if not edited_df.empty else 0
+                final_df = edited_df[edited_df["Delete"] == False].copy()
+                # Remove the Delete column from final output
+                final_df = final_df.drop(columns=["Delete"])
+                
+                if rows_to_delete > 0:
+                    st.info(f"🗑️ Removed {rows_to_delete} row(s) marked for deletion")
+            else:
+                final_df = edited_df.copy()
+            
+            st.session_state["validated_items"] = final_df
+            st.success(f"✅ Validated successfully - {len(final_df)} item(s) confirmed")
 
             source_file = st.session_state.get("active_source_file", "Unknown_File")
             csv_ok, csv_msg = save_validated_items_to_csv(
-                edited_df,
+                final_df,
                 source_file=source_file,
                 replace_existing=True,
                 upload_type=st.session_state.get("active_upload_type", ""),
@@ -523,7 +557,7 @@ with tab_primary:
 
             if st.session_state.get("push_gsheet_on_confirm", False):
                 push_ok, push_msg = push_validated_items_to_google_sheet(
-                    edited_df,
+                    final_df,
                     secrets=st.secrets,
                     gspread_module=gspread,
                     credentials_cls=Credentials,
