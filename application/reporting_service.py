@@ -124,6 +124,13 @@ def export_excel(
     date_str = date.today().strftime("%d-%m-%Y")
     tamil_font_name = "Nirmala UI"
     export_df = df.copy()
+    
+    # Sort by English name (extract from Tamil Name column if present)
+    if 'Tamil Name' in export_df.columns:
+        # Extract English name from "தமிழ் (ENGLISH)" format for sorting
+        export_df['_sort_key'] = export_df['Tamil Name'].astype(str).str.extract(r'\(([^)]+)\)$')[0].fillna(export_df['Tamil Name'])
+        export_df = export_df.sort_values(by='_sort_key', ascending=True)
+        export_df = export_df.drop(columns=['_sort_key'])
 
     if " " not in export_df.columns:
         export_df[" "] = ""
@@ -192,6 +199,15 @@ def export_pdf(
 
     date_str = date.today().strftime("%d-%m-%Y")
     client_text = str(client_name or "").strip()
+    
+    # Sort by English name (extract from Tamil Name column)
+    df_sorted = df.copy()
+    if 'Tamil Name' in df_sorted.columns:
+        # Extract English name from "தமிழ் (ENGLISH)" format for sorting
+        df_sorted['_sort_key'] = df_sorted['Tamil Name'].astype(str).str.extract(r'\(([^)]+)\)$')[0].fillna(df_sorted['Tamil Name'])
+        df_sorted = df_sorted.sort_values(by='_sort_key', ascending=True)
+        df_sorted = df_sorted.drop(columns=['_sort_key'])
+    df = df_sorted
 
     client_cols = [
         col
@@ -379,6 +395,12 @@ def export_delivery_challan_excel(
 
     if not invoice_date:
         invoice_date = date.today().strftime("%d-%m-%Y")
+    
+    # Sort by English name (Source Name column)
+    df_sorted = df.copy()
+    if 'Source Name' in df_sorted.columns:
+        df_sorted = df_sorted.sort_values(by='Source Name', ascending=True)
+    df = df_sorted
 
     wb = Workbook()
     ws = wb.active
@@ -710,6 +732,12 @@ def export_delivery_challan_pdf(
 
     if not invoice_date:
         invoice_date = date.today().strftime("%d-%m-%Y")
+    
+    # Sort by English name (Source Name column)
+    df_sorted = df.copy()
+    if 'Source Name' in df_sorted.columns:
+        df_sorted = df_sorted.sort_values(by='Source Name', ascending=True)
+    df = df_sorted
 
     # Build items table rows
     rows_html = ""
