@@ -7,7 +7,7 @@ from pathlib import Path
 from application.vegetable_detection_service import detect_vegetables as detect_vegetables_service
 from application.vegetable_detection_service import find_canonical_vegetable_name as find_canonical_vegetable_name_service
 from application.vegetable_catalog_service import load_vegetable_catalog
-from application.reporting_service import consolidate, consolidate_with_client_columns, export_excel, export_pdf
+from application.reporting_service import consolidate, consolidate_with_client_columns, export_excel, export_pdf, export_delivery_challan_excel, export_delivery_challan_pdf
 from application.extraction_service import normalize_text as normalize_text_service
 from infrastructure.assets_service import get_default_logo_data_uri, get_default_logo_path
 from infrastructure.document_readers import (
@@ -18,6 +18,15 @@ from infrastructure.document_readers import (
 from infrastructure.google_sheets_service import push_validated_items_to_google_sheet
 from infrastructure.ocr_engine import extract_image_text as extract_image_text_service
 from infrastructure.ocr_engine import load_ocr_model
+from infrastructure.address_service import (
+    load_addresses,
+    add_bill_to_address,
+    add_ship_to_address,
+    get_bill_to_names,
+    get_ship_to_names,
+    get_bill_to_address,
+    get_ship_to_address,
+)
 from infrastructure.persistence_service import (
     get_csv_path_for_date,
     list_saved_dates,
@@ -209,11 +218,12 @@ st.subheader(
 
 st.session_state["print_logo_data_uri"] = get_default_logo_data_uri()
 
-tab_primary, tab_saved, tab_consolidated = st.tabs(
+tab_primary, tab_saved, tab_consolidated, tab_challan = st.tabs(
     [
         "Upload Order",
         "Saved Orders",
         "Consolidated Orders",
+        "Delivery Challan",
     ]
 )
 
@@ -840,6 +850,284 @@ with tab_consolidated:
                     pdf_file,
                     file_name=f"vegetables_{selected_records_date}.pdf"
                 )
+
+
+with tab_challan:
+    st.subheader("📄 Delivery Challan")
+
+    challan_dates = list_saved_dates()
+    if not challan_dates:
+        st.info("Status: No saved orders available for challan generation.")
+    else:
+        st.info(f"Status: Available dates with orders = {len(challan_dates)}")
+
+    with st.expander("Generate Delivery Challan", expanded=True):
+        available_dates = challan_dates
+
+        if not available_dates:
+            st.caption("No saved orders yet. Validate and confirm a file first.")
+        else:
+            selected_challan_date = st.selectbox(
+                "Select date",
+                options=available_dates,
+                key="selected_challan_date_tab",
+            )
+
+            saved_by_date_df = load_saved_rows_for_date(selected_challan_date)
+            file_count = 0
+            if not saved_by_date_df.empty and "Source File" in saved_by_date_df.columns:
+                file_count = saved_by_date_df["Source File"].nunique()
+            
+            st.info(
+                f"Status: Date = {selected_challan_date} | Available orders = {file_count}"
+            )
+
+            if saved_by_date_df.empty:
+                st.caption("No orders found for selected date.")
+            else:
+                if "Source File" in saved_by_date_df.columns:
+                    source_files = sorted(saved_by_date_df["Source File"].astype(str).unique().tolist())
+                else:
+                    source_files = []
+
+                if source_files:
+                    selected_challan_file = st.selectbox(
+                        "Select Order",
+                        options=source_files,
+                        key="individual_challan_file_tab",
+                    )
+
+                    selected_df = saved_by_date_df[saved_by_date_df["Source File"] == selected_challan_file].copy()
+
+                    # Extract client name if available
+                    client_name = ""
+                    if "Client Name" in selected_df.columns and not selected_df.empty:
+                        client_name = str(selected_df["Client Name"].iloc[0]).strip()
+
+                    st.info(f"Order: {selected_challan_file} | Items: {len(selected_df)}" + (f" | Client: {client_name}" if client_name else ""))
+
+                    # Challan details input
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        invoice_no = st.text_input("Invoice No.", value="20689", key="challan_invoice_no")
+                        po_date = st.text_input("PO Date", value="29-07-2026", key="challan_po_date")
+                        vehicle_number = st.text_input("Vehicle Number", value="TN23C P8348", key="challan_vehicle")
+                    
+                    with col2:
+                        invoice_date = st.text_input("Invoice Date", value=date.today().strftime("%d-%m-%Y"), key="challan_invoice_date")
+                        po_delivery_date = st.text_input("PO Delivery Date", value=date.today().strftime("%d/%m/%Y"), key="challan_po_delivery")
+                        dl_no = st.text_input("DL No.", value="", key="challan_dl_no")
+                    
+                    with col3:
+                        payment_mode = st.selectbox("Payment Mode", options=["Credit", "Cash", "Online Transfer", "Cheque"], key="challan_payment_mode")
+                        invoice_amount = st.text_input("Invoice Amount", value="11319.0", key="challan_invoice_amount", help="Total invoice amount")
+
+                    # Address details
+                    st.markdown("#### Bill To / Ship To Details")
+                    
+                    # Load saved addresses
+                    saved_addresses = load_addresses()
+                    bill_to_options = [addr["name"] for addr in saved_addresses.get("bill_to_addresses", [])]
+                    ship_to_options = [addr["name"] for addr in saved_addresses.get("ship_to_addresses", [])]
+                    
+                    # Add "Add New..." option
+                    bill_to_options.append("➕ Add New...")
+                    ship_to_options.append("➕ Add New...")
+                    
+                    col_bill, col_ship = st.columns(2)
+                    
+                    with col_bill:
+                        st.markdown("**Bill To**")
+                        
+                        # Default to client name if available and exists in options
+                        default_bill_idx = 0
+                        if client_name and client_name in bill_to_options:
+                            default_bill_idx = bill_to_options.index(client_name)
+                        
+                        bill_to_selection = st.selectbox(
+                            "Select Company",
+                            options=bill_to_options,
+                            index=default_bill_idx,
+                            key="challan_bill_to_select"
+                        )
+                        
+                        if bill_to_selection == "➕ Add New...":
+                            bill_to_name = st.text_input(
+                                "New Company Name",
+                                value="",
+                                key="challan_bill_to_name_new"
+                            )
+                            bill_to_address = st.text_area(
+                                "Address",
+                                value="",
+                                height=100,
+                                key="challan_bill_to_address_new"
+                            )
+                            
+                            if st.button("💾 Save Bill To Address", key="save_bill_to"):
+                                if bill_to_name.strip() and bill_to_address.strip():
+                                    if add_bill_to_address(bill_to_name, bill_to_address):
+                                        st.success(f"✅ Saved: {bill_to_name}")
+                                        st.rerun()
+                                    else:
+                                        st.warning(f"⚠️ Address already exists: {bill_to_name}")
+                                else:
+                                    st.warning("⚠️ Please enter both company name and address")
+                        else:
+                            bill_to_name = bill_to_selection
+                            bill_to_address = get_bill_to_address(bill_to_selection)
+                            st.text_area(
+                                "Address",
+                                value=bill_to_address,
+                                height=100,
+                                disabled=True,
+                                key="challan_bill_to_address_display"
+                            )
+                    
+                    with col_ship:
+                        st.markdown("**Ship To**")
+                        
+                        # Default to client name if available and exists in options
+                        default_ship_idx = 0
+                        if client_name and client_name in ship_to_options:
+                            default_ship_idx = ship_to_options.index(client_name)
+                        
+                        ship_to_selection = st.selectbox(
+                            "Select Company",
+                            options=ship_to_options,
+                            index=default_ship_idx,
+                            key="challan_ship_to_select"
+                        )
+                        
+                        if ship_to_selection == "➕ Add New...":
+                            ship_to_name = st.text_input(
+                                "New Company Name",
+                                value="",
+                                key="challan_ship_to_name_new"
+                            )
+                            ship_to_address = st.text_area(
+                                "Address",
+                                value="",
+                                height=100,
+                                key="challan_ship_to_address_new"
+                            )
+                            
+                            if st.button("💾 Save Ship To Address", key="save_ship_to"):
+                                if ship_to_name.strip() and ship_to_address.strip():
+                                    if add_ship_to_address(ship_to_name, ship_to_address):
+                                        st.success(f"✅ Saved: {ship_to_name}")
+                                        st.rerun()
+                                    else:
+                                        st.warning(f"⚠️ Address already exists: {ship_to_name}")
+                                else:
+                                    st.warning("⚠️ Please enter both company name and address")
+                        else:
+                            ship_to_name = ship_to_selection
+                            ship_to_address = get_ship_to_address(ship_to_selection)
+                            st.text_area(
+                                "Address",
+                                value=ship_to_address,
+                                height=100,
+                                disabled=True,
+                                key="challan_ship_to_address_display"
+                            )
+
+                    # Company details
+                    with st.expander("Company Details (PKS FRESH)", expanded=False):
+                        company_col1, company_col2 = st.columns(2)
+                        
+                        with company_col1:
+                            company_name_input = st.text_input("Company Name", value="PKS FRESH", key="challan_company_name")
+                            phone_input = st.text_input("Phone", value="9790139595", key="challan_phone")
+                        
+                        with company_col2:
+                            email_input = st.text_input("Email", value="pksfresh1@gmail.com", key="challan_email")
+                            company_address_input = st.text_area(
+                                "Company Address",
+                                value="1971, M.P SARATHI MANSION,\nNETHAJI MARKET,\nCHENNAI,\n652004",
+                                height=80,
+                                key="challan_company_address"
+                            )
+
+                    # Preview items
+                    st.markdown("#### Items in Challan")
+                    
+                    # Sort items alphabetically by Source Name (English name)
+                    if "Source Name" in selected_df.columns:
+                        selected_df_sorted = selected_df.sort_values(by="Source Name", ascending=True).reset_index(drop=True)
+                    else:
+                        selected_df_sorted = selected_df.copy()
+                    
+                    display_cols = [
+                        col
+                        for col in ["Source Name", "Tamil Name", "Quantity", "Status"]
+                        if col in selected_df_sorted.columns
+                    ]
+                    st.dataframe(selected_df_sorted[display_cols], use_container_width=True)
+
+                    # Generate challans
+                    st.markdown("---")
+                    
+                    challan_excel = export_delivery_challan_excel(
+                        selected_df_sorted,
+                        invoice_no=invoice_no,
+                        invoice_date=invoice_date,
+                        po_date=po_date,
+                        po_delivery_date=po_delivery_date,
+                        vehicle_number=vehicle_number,
+                        bill_to_name=bill_to_name,
+                        bill_to_address=bill_to_address,
+                        ship_to_name=ship_to_name,
+                        ship_to_address=ship_to_address,
+                        payment_mode=payment_mode,
+                        company_name=company_name_input,
+                        company_address=company_address_input,
+                        phone=phone_input,
+                        email=email_input,
+                        logo_path=get_default_logo_path(),
+                        dl_no=dl_no,
+                        invoice_amount=invoice_amount,
+                    )
+
+                    challan_pdf = export_delivery_challan_pdf(
+                        selected_df_sorted,
+                        invoice_no=invoice_no,
+                        invoice_date=invoice_date,
+                        po_date=po_date,
+                        po_delivery_date=po_delivery_date,
+                        vehicle_number=vehicle_number,
+                        bill_to_name=bill_to_name,
+                        bill_to_address=bill_to_address,
+                        ship_to_name=ship_to_name,
+                        ship_to_address=ship_to_address,
+                        payment_mode=payment_mode,
+                        company_name=company_name_input,
+                        company_address=company_address_input,
+                        phone=phone_input,
+                        email=email_input,
+                        logo_data_uri=st.session_state.get("print_logo_data_uri", ""),
+                        dl_no=dl_no,
+                        invoice_amount=invoice_amount,
+                    )
+
+                    col_dl1, col_dl2 = st.columns(2)
+                    
+                    with col_dl1:
+                        st.download_button(
+                            "📥 Download Challan (Excel)",
+                            challan_excel,
+                            file_name=f"delivery_challan_{invoice_no}_{selected_challan_date}.xlsx",
+                            help="Download delivery challan in Excel format"
+                        )
+                    
+                    with col_dl2:
+                        st.download_button(
+                            "📥 Download Challan (PDF)",
+                            challan_pdf,
+                            file_name=f"delivery_challan_{invoice_no}_{selected_challan_date}.pdf",
+                            help="Download delivery challan in PDF format"
+                        )
 
 
 

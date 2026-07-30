@@ -11,6 +11,7 @@ def bytes_to_data_uri(image_bytes, file_name="logo.png"):
 
 def get_default_logo_data_uri():
     candidates = [
+        Path("assets/pks-logo.jpeg"),
         Path("assets/PKS_Logo.jpeg"),
         Path("assets/logo.png"),
         Path("assets/logo.jpg"),

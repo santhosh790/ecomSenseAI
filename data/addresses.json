@@ -1,0 +1,14 @@
+{
+  "bill_to_addresses": [
+    {
+      "name": "RASSENSE PRIVATE LIMITED",
+      "address": "No. 15,16,17 2nd Floor,\nVision Towers, Yogam Garden,\nBrindavan Nagar,\nValasaravakkam,\nChennai - 600 087"
+    }
+  ],
+  "ship_to_addresses": [
+    {
+      "name": "RASSENSE PRIVATE LIMITED - Valves",
+      "address": "M/S LARSEN & TOUBRO LIMITED,\nVALVES LIMITED,\nNEXT TO SOSVMV University,\nEnathur Village, Kanchipuram - 631 561"
+    }
+  ]
+}
