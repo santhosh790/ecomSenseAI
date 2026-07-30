@@ -28,6 +28,7 @@ def get_default_logo_data_uri():
 
 def get_default_logo_path():
     candidates = [
+        Path("assets/pks-logo.jpeg"),
         Path("assets/PKS_Logo.jpeg"),
         Path("assets/logo.png"),
         Path("assets/logo.jpg"),
