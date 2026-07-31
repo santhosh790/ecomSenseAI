@@ -107,6 +107,63 @@ def consolidate_with_client_columns(df):
     return pivot_df[["Tamil Name", *client_cols, "Total Quantity", "Unit"]]
 
 
+def _categorize_item(name):
+    """
+    Categorize item as 'fruit' or 'vegetable' based on English name.
+    Extract English name from "தமிழ் (ENGLISH)" format.
+    """
+    if not name:
+        return "vegetable"
+    
+    # Extract English name from Tamil Name format
+    english_match = re.search(r'\(([^)]+)\)$', str(name))
+    english_name = english_match.group(1).upper() if english_match else str(name).upper()
+    
+    # List of common fruits
+    fruits = {
+        'APPLE', 'AVOCADO', 'BANANA', 'BLACKBERRY', 'BLUE BERRY', 'CHERRY', 'CHIKKU',
+        'CUSTARD APPLE', 'DATES', 'DRAGON FRUIT', 'FIG', 'GRAPE', 'GRAPES', 'GUAVA',
+        'JACK FRUIT', 'JACKFRUIT', 'JAVA PLUM', 'JAMUN', 'KIWI', 'LEMON', 'LIME',
+        'LITCHI', 'LYCHEE', 'MANGO', 'MELON', 'MOSSAMBI', 'MUSK MELON', 'ORANGE',
+        'PAPAYA', 'PASSION FRUIT', 'PEACH', 'PEAR', 'PEARS', 'PINE APPLE', 'PINEAPPLE',
+        'PLUM', 'PLUMS', 'POMEGRANATE', 'RAMBUTAN', 'RASPBERRIES', 'SAPOTA', 'STRAW BERRY',
+        'STRAWBERRY', 'SWEET LIME', 'WATER MELON', 'WATERMELON', 'WOOD APPLE',
+        'GRAPE FRUIT', 'CASHEW APPLE', 'BERRY AUSTRALIAN'
+    }
+    
+    # Check if any fruit keyword is in the name
+    for fruit in fruits:
+        if fruit in english_name:
+            return "fruit"
+    
+    return "vegetable"
+
+
+def _sort_items_by_category(df, name_column='Tamil Name'):
+    """
+    Sort items with vegetables first, then fruits, each group alphabetically.
+    """
+    if df.empty or name_column not in df.columns:
+        return df
+    
+    df_sorted = df.copy()
+    
+    # Extract English name for sorting
+    df_sorted['_english_name'] = df_sorted[name_column].astype(str).str.extract(r'\(([^)]+)\)$')[0].fillna(df_sorted[name_column])
+    
+    # Categorize each item
+    df_sorted['_category'] = df_sorted[name_column].apply(_categorize_item)
+    
+    # Sort: vegetables (0) before fruits (1), then alphabetically by English name
+    df_sorted['_category_order'] = df_sorted['_category'].map({'vegetable': 0, 'fruit': 1})
+    df_sorted = df_sorted.sort_values(by=['_category_order', '_english_name'], ascending=[True, True])
+    
+    # Drop temporary columns
+    df_sorted = df_sorted.drop(columns=['_english_name', '_category', '_category_order'])
+    
+    return df_sorted
+
+
 def export_excel(
     df,
     logo_path="",
@@ -125,12 +182,9 @@ def export_excel(
     tamil_font_name = "Nirmala UI"
     export_df = df.copy()
     
-    # Sort by English name (extract from Tamil Name column if present)
+    # Sort by category (vegetables first, then fruits), each group alphabetically
     if 'Tamil Name' in export_df.columns:
-        # Extract English name from "தமிழ் (ENGLISH)" format for sorting
-        export_df['_sort_key'] = export_df['Tamil Name'].astype(str).str.extract(r'\(([^)]+)\)$')[0].fillna(export_df['Tamil Name'])
-        export_df = export_df.sort_values(by='_sort_key', ascending=True)
-        export_df = export_df.drop(columns=['_sort_key'])
+        export_df = _sort_items_by_category(export_df, 'Tamil Name')
     
     # Rename columns to Tamil
     column_rename_map = {
@@ -208,13 +262,10 @@ def export_pdf(
     date_str = date.today().strftime("%d-%m-%Y")
     client_text = str(client_name or "").strip()
     
-    # Sort by English name (extract from Tamil Name column)
+    # Sort by category (vegetables first, then fruits), each group alphabetically
     df_sorted = df.copy()
     if 'Tamil Name' in df_sorted.columns:
-        # Extract English name from "தமிழ் (ENGLISH)" format for sorting
-        df_sorted['_sort_key'] = df_sorted['Tamil Name'].astype(str).str.extract(r'\(([^)]+)\)$')[0].fillna(df_sorted['Tamil Name'])
-        df_sorted = df_sorted.sort_values(by='_sort_key', ascending=True)
-        df_sorted = df_sorted.drop(columns=['_sort_key'])
+        df_sorted = _sort_items_by_category(df_sorted, 'Tamil Name')
     df = df_sorted
 
     client_cols = [
@@ -419,10 +470,13 @@ def export_delivery_challan_excel(
     if not invoice_date:
         invoice_date = date.today().strftime("%d-%m-%Y")
     
-    # Sort by English name (Source Name column)
+    # Sort by category (vegetables first, then fruits), each group alphabetically
     df_sorted = df.copy()
     if 'Source Name' in df_sorted.columns:
-        df_sorted = df_sorted.sort_values(by='Source Name', ascending=True)
+        # For delivery challan, create a temporary Tamil Name column for sorting
+        df_sorted['_temp_tamil'] = df_sorted['Source Name'].apply(lambda x: f"({x})")
+        df_sorted = _sort_items_by_category(df_sorted, '_temp_tamil')
+        df_sorted = df_sorted.drop(columns=['_temp_tamil'])
     df = df_sorted
 
     wb = Workbook()
@@ -756,10 +810,13 @@ def export_delivery_challan_pdf(
     if not invoice_date:
         invoice_date = date.today().strftime("%d-%m-%Y")
     
-    # Sort by English name (Source Name column)
+    # Sort by category (vegetables first, then fruits), each group alphabetically
     df_sorted = df.copy()
     if 'Source Name' in df_sorted.columns:
-        df_sorted = df_sorted.sort_values(by='Source Name', ascending=True)
+        # For delivery challan, create a temporary Tamil Name column for sorting
+        df_sorted['_temp_tamil'] = df_sorted['Source Name'].apply(lambda x: f"({x})")
+        df_sorted = _sort_items_by_category(df_sorted, '_temp_tamil')
+        df_sorted = df_sorted.drop(columns=['_temp_tamil'])
     df = df_sorted
 
     # Build items table rows
