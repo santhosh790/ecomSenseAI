@@ -131,6 +131,14 @@ def export_excel(
         export_df['_sort_key'] = export_df['Tamil Name'].astype(str).str.extract(r'\(([^)]+)\)$')[0].fillna(export_df['Tamil Name'])
         export_df = export_df.sort_values(by='_sort_key', ascending=True)
         export_df = export_df.drop(columns=['_sort_key'])
+    
+    # Rename columns to Tamil
+    column_rename_map = {
+        'Tamil Name': 'காய்கறி பெயர்',
+        'Total Quantity': 'மொத்த அளவு',
+        'Unit': 'அலகு'
+    }
+    export_df = export_df.rename(columns=column_rename_map)
 
     if " " not in export_df.columns:
         export_df[" "] = ""
@@ -252,11 +260,7 @@ def export_pdf(
 
     logo_html = ""
     if logo_data_uri:
-        logo_html = (
-            '<div class="brand-logo-wrap">'
-            f'<img class="brand-logo" src="{logo_data_uri}" alt="Company Logo" />'
-            "</div>"
-        )
+        logo_html = f'<img class="brand-logo" src="{logo_data_uri}" alt="Company Logo" />'
 
     html_content = f"""<!DOCTYPE html>
 <html lang=\"ta\">
@@ -267,37 +271,50 @@ def export_pdf(
     font-family: 'TamilFont';
         src: local('Noto Sans Tamil'), local('Lohit Tamil'), local('Tamil Sangam MN'), local('Tamil MN');
   }}
+  @page {{
+    margin: 15mm;
+  }}
   body {{
         font-family: 'Noto Sans Tamil', 'Lohit Tamil', 'Tamil Sangam MN', 'Tamil MN', serif;
-    margin: 40px;
+    margin: 0;
+    padding: 0;
     color: #111;
   }}
-  h1 {{
-    text-align: center;
-    font-size: 26px;
-    margin-bottom: 4px;
-    letter-spacing: 1px;
+  .header-section {{
+    display: flex;
+    align-items: center;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid #2c3e50;
   }}
-    .brand-logo-wrap {{
-        text-align: center;
-        margin-bottom: 10px;
-    }}
-    .brand-logo {{
-        max-height: 90px;
-        max-width: 180px;
-        object-fit: contain;
-    }}
+  .header-left {{
+    display: flex;
+    align-items: center;
+    flex: 1;
+  }}
+  .brand-logo {{
+    height: 50px;
+    width: auto;
+    margin-right: 15px;
+  }}
+  .header-text {{
+    flex: 1;
+  }}
+  .company-name {{
+    font-size: 20px;
+    font-weight: bold;
+    margin: 0;
+    line-height: 1.2;
+  }}
   .subtitle {{
-    text-align: center;
-    font-size: 16px;
+    font-size: 14px;
     color: #555;
-    margin-bottom: 4px;
+    margin: 2px 0 0 0;
   }}
   .date-line {{
-        text-align: left;
-    font-size: 11px;
+    font-size: 10px;
     color: #444;
-    margin-bottom: 14px;
+    margin-bottom: 8px;
   }}
   table {{
     width: 100%;
@@ -308,22 +325,22 @@ def export_pdf(
     color: #fff;
   }}
   th {{
-    padding: 9px 14px;
-    font-size: 16px;
+    padding: 6px 10px;
+    font-size: 12px;
     text-align: left;
   }}
   th.num {{ text-align: right; }}
   td {{
-    padding: 8px 14px;
-    font-size: 16px;
+    padding: 5px 10px;
+    font-size: 11px;
     border-bottom: 1px solid #ddd;
   }}
   td.num {{ text-align: right; }}
   tfoot td {{
     font-weight: bold;
     border-top: 2px solid #2c3e50;
-    padding: 8px 16px;
-    font-size: 12px;
+    padding: 6px 10px;
+    font-size: 11px;
   }}
     .footer-note {{
         margin-top: 14px;
@@ -334,10 +351,16 @@ def export_pdf(
 </style>
 </head>
 <body>
-    {logo_html}
-    <h1>{str(header_text or '')}</h1>
-    <div class=\"subtitle\">காய்கறி பட்டியல்</div>
-    <div class=\"date-line\">{'வாடிக்கையாளர்: ' + client_text + '  &nbsp;&nbsp; &nbsp;&nbsp;  ' if client_text else ''}{str(above_list_text or '')}  &nbsp;&nbsp; &nbsp;&nbsp;  தேதி: {date_str}</div>
+    <div class=\"header-section\">
+        <div class=\"header-left\">
+            {logo_html}
+            <div class=\"header-text\">
+                <div class=\"company-name\">{str(header_text or '')}</div>
+                <div class=\"subtitle\">காய்கறி பட்டியல்</div>
+            </div>
+        </div>
+    </div>
+    <div class=\"date-line\">{'வாடிக்கையாளர்: ' + client_text + '  |  ' if client_text else ''}{str(above_list_text or '')}{'  |  ' if str(above_list_text or '').strip() else ''}தேதி: {date_str}</div>
   <table>
     <thead>
       <tr>
