@@ -191,6 +191,19 @@ def extract_row_fields(text):
             unit = "KG"
         return material, f"{qty} {unit}"
 
+    # Handle OCR errors in units for simple freeform lines (Rg, Ko, Ke, Kq → KG)
+    # Example: "Onion 100Rg" or "Gobi 20Rg" or "Jinger 5Ko"
+    freeform_ocr_match = re.search(
+        r"^\s*(.+?)\s+(\d+(?:\.\d+)?)\s*(?:Rg|R[gq]|K[oegq]|KGS|Kgs)\.?\s*$",
+        compact,
+        flags=re.IGNORECASE,
+    )
+    if freeform_ocr_match:
+        material = freeform_ocr_match.group(1).strip()
+        qty = normalize_quantity_number(freeform_ocr_match.group(2))
+        # All these OCR errors should map to KG
+        return material, f"{qty} KG"
+
     freeform_match = re.search(
         r"^\s*(.+?)\s+(\d+(?:\.\d+)?)\s*(KG|KGS|NOS|EA)\.?\s*$",
         compact,
@@ -215,6 +228,8 @@ def build_row_candidates(lines, noise_line_patterns):
     quantity_fragment_pattern = r"^\d+(?:\.\d+)?\s*(?:KG|KGS|NOS|EA)\b"
     unit_first_fragment_pattern = r"^(?:KG|KGS|NOS|EA)\b\s*\d"
     amount_fragment_pattern = r"^\d{1,3}(?:,\d{3})*(?:\.\d+)?$"
+    # Pattern to recognize standalone item lines: "Name Qty Unit" (with possible OCR errors in unit)
+    standalone_item_pattern = r"^[A-Za-z][\w\s]{2,}\s+\d+(?:\.\d+)?\s*(?:Rg|R[gq]|K[oegq]|KGS|Kgs|kg|nos|ea|NOS|EA)\b"
 
     for raw_line in lines:
         line = raw_line.strip()
@@ -222,6 +237,9 @@ def build_row_candidates(lines, noise_line_patterns):
         if not line or is_noise_line(line, noise_line_patterns):
             continue
 
+        # Check if this is a standalone item line (e.g., "Onion 100Rg", "Tomato 80kg")
+        is_standalone_item = bool(re.match(standalone_item_pattern, line, flags=re.IGNORECASE))
+        
         serial_match = re.match(serial_row_pattern, line)
         if serial_match:
             remainder = line[serial_match.end():].strip()
@@ -240,10 +258,18 @@ def build_row_candidates(lines, noise_line_patterns):
                 row_candidates.append(current_row)
             current_row = line
         else:
-            if current_row:
-                current_row = f"{current_row} {line}"
-            else:
+            # If it's a standalone item line, treat it as a new row
+            if is_standalone_item:
+                if current_row:
+                    row_candidates.append(current_row)
+                current_row = ""
                 row_candidates.append(line)
+            else:
+                # Otherwise, append to current row or add as standalone
+                if current_row:
+                    current_row = f"{current_row} {line}"
+                else:
+                    row_candidates.append(line)
 
     if current_row:
         row_candidates.append(current_row)
@@ -950,6 +976,150 @@ def deduplicate_detections(results):
     return filtered
 
 
+# ============================================================
+# MHS MULTI-LINE FORMAT PARSER
+# ============================================================
+
+def is_mhs_document_text(text):
+    """
+    Detect MHS format: Multi-line pattern with Item Name | Item Code | Quantity
+    """
+    if not text:
+        return False
+    
+    text_upper = text.upper()
+    
+    # Check for MHS-specific keywords
+    has_mhs_marker = any(marker in text_upper for marker in [
+        "INDYA FOODS - MHS",
+        "MHS/PR/",
+        "PURCHASE REQUISITION",
+    ])
+    
+    if not has_mhs_marker:
+        return False
+    
+    # Check for multi-line pattern: lines with 6-7 digit codes
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    item_code_count = sum(1 for line in lines if re.match(r'^\d{7}$', line))
+    
+    # Should have multiple item codes (at least 3)
+    return item_code_count >= 3
+
+
+def build_mhs_row_candidates(lines):
+    """
+    Build MHS row candidates from multi-line format.
+    Pattern: Item Name | Item Code (7 digits) | Quantity with UOM
+    
+    Example:
+        BABY CORN PEELED
+        1100006
+        1 Kgs
+    """
+    row_candidates = []
+    idx = 0
+    total = len(lines)
+    
+    # Skip header lines
+    header_keywords = ["ITEM CODE", "ITEM NAME", "QTY", "DESCRIPTION", "HSN", "GSTIN", "DOC NO", "DOC DATE"]
+    
+    while idx < total:
+        line = lines[idx].strip()
+        
+        # Skip empty lines
+        if not line:
+            idx += 1
+            continue
+        
+        # Skip header lines
+        if any(keyword in line.upper() for keyword in header_keywords):
+            idx += 1
+            continue
+        
+        # Skip lines that look like metadata
+        if re.match(r'^(Regd\.|Email|GSTIN|Purchase|Doc|Department|Buyer|Plant|Indent)', line, re.IGNORECASE):
+            idx += 1
+            continue
+        
+        # Check if this line looks like an item name (alphabetic, > 3 chars)
+        if not re.match(r'^[A-Z][A-Z\s]{2,}', line, re.IGNORECASE):
+            idx += 1
+            continue
+        
+        item_name = line
+        
+        # Next line should be item code (exactly 7 digits)
+        if idx + 1 >= total:
+            idx += 1
+            continue
+        
+        item_code_line = lines[idx + 1].strip()
+        if not re.match(r'^\d{7}$', item_code_line):
+            idx += 1
+            continue
+        
+        item_code = item_code_line
+        
+        # Next line should be quantity with UOM
+        if idx + 2 >= total:
+            idx += 1
+            continue
+        
+        qty_line = lines[idx + 2].strip()
+        
+        # Check if it has quantity pattern (number + unit)
+        if not re.search(r'\d+(?:\.\d+)?\s*(?:Kgs?|kgs?|KGS?|Nos?|nos?|NOS?|EA|ea)', qty_line, re.IGNORECASE):
+            idx += 1
+            continue
+        
+        # Found a valid 3-line pattern, combine them
+        combined = f"{item_name} | {item_code} | {qty_line}"
+        row_candidates.append(combined)
+        
+        # Move to next potential item (skip the 3 lines we just processed)
+        idx += 3
+    
+    return row_candidates
+
+
+def extract_mhs_row_fields(candidate_text):
+    """
+    Extract material and quantity from MHS combined row.
+    Format: "ITEM NAME | ITEM_CODE | QTY UNIT"
+    """
+    if not candidate_text or " | " not in candidate_text:
+        return "", ""
+    
+    parts = candidate_text.split(" | ")
+    if len(parts) < 3:
+        return "", ""
+    
+    material = parts[0].strip()
+    qty_text = parts[2].strip()
+    
+    # Extract quantity and unit
+    qty_match = re.search(r'(\d+(?:\.\d+)?)\s*(Kgs?|kgs?|KGS?|Nos?|nos?|NOS?|EA|ea)', qty_text, re.IGNORECASE)
+    if not qty_match:
+        return material, ""
+    
+    qty = normalize_quantity_number(qty_match.group(1))
+    unit = qty_match.group(2).upper()
+    
+    # Normalize units
+    if unit.startswith("KG"):
+        unit = "KG"
+    elif unit.startswith("NO"):
+        unit = "NOS"
+    elif unit.upper() == "EA":
+        unit = "EA"
+    
+    # Clean material name
+    material = normalize_material_name(material)
+    
+    return material, f"{qty} {unit}"
+
+
 def detect_vegetables(
     text,
     vegetable_aliases,
@@ -970,20 +1140,34 @@ def detect_vegetables(
     row_candidates = []
     
     # Determine which client-specific parser to use
+    mhs_by_client = client_name and client_name.upper() == "MHS"
     fvit_by_client = client_name and client_name.upper() == "FVIT"
     vit_by_client = client_name and client_name.upper() == "VIT"
+    
+    mhs_by_detection = is_mhs_document_text(text)
     vit_by_detection = is_vit_document_text(text)
     
+    # MHS mode (multi-line: Item Name | Item Code | Quantity)
+    mhs_mode = mhs_by_client or (mhs_by_detection and not fvit_by_client and not vit_by_client)
     # FVIT mode (8-column format)
     fvit_mode = fvit_by_client
     # VIT mode (11-12 column format)
-    vit_mode = vit_by_client or (vit_by_detection and not fvit_mode)
+    vit_mode = vit_by_client or (vit_by_detection and not fvit_mode and not mhs_mode)
     
     # Track parser strategy for reporting
     parser_mode = None
     activation_reason = ""
     
-    if fvit_mode:
+    if mhs_mode:
+        parser_mode = "mhs-multiline"
+        if mhs_by_client:
+            activation_reason = f"Client name: '{client_name}'"
+        else:
+            activation_reason = "Auto-detected MHS document signature"
+        row_candidates = build_mhs_row_candidates(lines)
+        extraction_attempted = True
+        extraction_found_rows = len(row_candidates) > 0
+    elif fvit_mode:
         parser_mode = "fvit-special"
         activation_reason = f"Client name: '{client_name}'"
         row_candidates = build_fvit_row_candidates(lines)
@@ -1024,7 +1208,9 @@ def detect_vegetables(
 
     for idx, row in enumerate(row_candidates, start=1):
         # Use client-specific extractor based on mode
-        if fvit_mode:
+        if mhs_mode:
+            material, quantity = extract_mhs_row_fields(row)
+        elif fvit_mode:
             material, quantity = extract_fvit_row_fields(row)
         elif vit_mode:
             material, quantity = extract_vit_row_fields(row)
@@ -1043,8 +1229,8 @@ def detect_vegetables(
             unmatched_lines.append({"Line": idx, "Text": row})
             continue
 
-        # For VIT mode, quantity should already be extracted; for generic, try to extract if missing
-        if not quantity and not vit_mode:
+        # For VIT/MHS mode, quantity should already be extracted; for generic, try to extract if missing
+        if not quantity and not vit_mode and not mhs_mode:
             quantity = extract_row_quantity(row)
 
         detection = VegetableDetection(

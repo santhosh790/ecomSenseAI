@@ -256,7 +256,7 @@ with tab_primary:
     ).strip()
     
     # Parser selection dropdown
-    parser_options = ["Generic", "VIT", "FVIT"]
+    parser_options = ["Generic", "VIT", "FVIT", "MHS"]
     st.session_state["parser_selection"] = st.selectbox(
         "Parser Strategy",
         options=parser_options,
@@ -271,7 +271,7 @@ with tab_primary:
         
         - **Generic** (Default): Works with most purchase order formats
           - Handles various column layouts
-          - Automatically corrects OCR errors (Ko/Ke/Kq → KG)
+          - Automatically corrects OCR errors (Ko/Ke/Kq/Rg → KG)
           - Recommended for most documents
         
         - **VIT**: Optimized for VIT Purchase Orders
@@ -283,9 +283,14 @@ with tab_primary:
           - 8 column format
           - Pattern: Serial | Material | HSN | UOM | Qty
         
+        - **MHS**: Optimized for MHS Multi-line Purchase Requisitions
+          - Multi-line format (3 lines per item)
+          - Pattern: Item Name → Item Code (7 digits) → Quantity with UOM
+          - Example: BABY CORN PEELED → 1100006 → 1 Kgs
+        
         **Tips:**
         - Start with **Generic** - it handles most documents well
-        - Switch to VIT/FVIT if Generic doesn't extract properly
+        - Switch to VIT/FVIT/MHS if Generic doesn't extract properly
         - The system automatically handles common OCR errors
         """)
 
