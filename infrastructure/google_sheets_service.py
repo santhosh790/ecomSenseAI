@@ -180,8 +180,9 @@ def push_consolidated_to_google_sheet(
                 primary_key_lookup[key] = (idx, row)
         
         # Process each row in the push dataframe
-        rows_updated = 0
-        rows_inserted = 0
+        # Collect updates and inserts separately for batch operations
+        rows_to_update = []  # List of (range, values) tuples
+        rows_to_insert = []
         
         for _, row_data in push_df.iterrows():
             date_val = str(row_data["Date"]).strip()
@@ -192,22 +193,31 @@ def push_consolidated_to_google_sheet(
             row_values = [str(val) for val in row_data.values]
             
             if key in primary_key_lookup:
-                # Update existing row
+                # Collect row update
                 row_idx, existing_row = primary_key_lookup[key]
-                # Update the entire row
-                for col_idx, val in enumerate(row_values, start=1):
-                    worksheet.update_cell(row_idx, col_idx, val)
-                rows_updated += 1
+                # Create range string like "A2:E2"
+                range_str = f"A{row_idx}:E{row_idx}"
+                rows_to_update.append({
+                    'range': range_str,
+                    'values': [row_values]
+                })
             else:
-                # Insert new row
-                worksheet.append_row(row_values, value_input_option="USER_ENTERED")
-                rows_inserted += 1
+                # Collect new row to insert
+                rows_to_insert.append(row_values)
+        
+        # Perform batch update for existing rows (single API call)
+        if rows_to_update:
+            worksheet.batch_update(rows_to_update, value_input_option="USER_ENTERED")
+        
+        # Perform batch insert for new rows (single API call)
+        if rows_to_insert:
+            worksheet.append_rows(rows_to_insert, value_input_option="USER_ENTERED")
         
         summary = []
-        if rows_updated > 0:
-            summary.append(f"updated {rows_updated} row(s)")
-        if rows_inserted > 0:
-            summary.append(f"inserted {rows_inserted} row(s)")
+        if rows_to_update:
+            summary.append(f"updated {len(rows_to_update)} row(s)")
+        if rows_to_insert:
+            summary.append(f"inserted {len(rows_to_insert)} row(s)")
         
         return True, f"Consolidated push complete: {', '.join(summary)}."
     except Exception as err:
