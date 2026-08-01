@@ -15,7 +15,7 @@ from infrastructure.document_readers import (
     read_image,
     read_pdf,
 )
-from infrastructure.google_sheets_service import push_validated_items_to_google_sheet
+from infrastructure.google_sheets_service import push_validated_items_to_google_sheet, push_consolidated_to_google_sheet
 from infrastructure.ocr_engine import extract_image_text as extract_image_text_service
 from infrastructure.ocr_engine import load_ocr_model
 from infrastructure.address_service import (
@@ -823,6 +823,29 @@ with tab_consolidated:
                     st.info(f"Client Name(s): {consolidated_client_name}")
 
                 st.dataframe(final_df, use_container_width=True)
+
+                # Google Sheets push option
+                push_consolidated_checkbox = st.checkbox(
+                    "Push consolidated data to Google Sheet",
+                    value=False,
+                    key="push_consolidated_gsheet",
+                    help="Push to 'consolidated' sheet. Transforms data to: Date | ClientName | Item | Unit | Quantity (one row per client per item). Primary key: Date+ClientName+Item.",
+                )
+
+                if push_consolidated_checkbox:
+                    if st.button("📤 Push to Google Sheets", key="push_consolidated_btn"):
+                        push_ok, push_msg = push_consolidated_to_google_sheet(
+                            final_df,
+                            target_date=selected_records_date,
+                            client_names=consolidated_client_name,
+                            secrets=st.secrets,
+                            gspread_module=gspread,
+                            credentials_cls=Credentials,
+                        )
+                        if push_ok:
+                            st.success(push_msg)
+                        else:
+                            st.error(push_msg)
 
                 dl_header, dl_above, dl_footer = get_download_text_customization("consolidated")
 
