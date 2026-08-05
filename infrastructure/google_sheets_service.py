@@ -6,10 +6,13 @@ def push_validated_items_to_google_sheet(
     secrets,
     gspread_module,
     credentials_cls,
+    target_date=None,
 ):
     """
     Push validated items to Google Sheets with Order column to preserve extraction sequence.
     Sheet Format: Order | Date | [original columns...]
+    Args:
+        target_date: ISO format date string (YYYY-MM-DD). If None, uses today's date.
     """
     if df is None or len(df) == 0:
         return False, "No validated rows to push."
@@ -46,8 +49,8 @@ def push_validated_items_to_google_sheet(
         push_df = df.copy()
         # Add Order column (1-based sequence) as first column
         push_df.insert(0, "Order", range(1, len(push_df) + 1))
-        # Add Date column
-        push_df["Date"] = date.today().isoformat()
+        # Add Date column (use target_date if provided, otherwise today)
+        push_df["Date"] = target_date if target_date else date.today().isoformat()
         push_df = push_df.fillna("")
         
         # Reorder columns to put Order and Date first

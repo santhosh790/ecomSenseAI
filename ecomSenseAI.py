@@ -248,6 +248,15 @@ with tab_primary:
         ]
     )
 
+    # Date selector for the order
+    from datetime import date, timedelta
+    st.session_state["active_order_date"] = st.date_input(
+        "Order Date",
+        value=st.session_state.get("active_order_date", date.today()),
+        help="Select the date for this order. You can upload orders for different dates on the same day.",
+        key="order_date_selector",
+    )
+    
     st.session_state["active_client_name"] = st.text_input(
         "Client Name",
         value=st.session_state.get("active_client_name", ""),
@@ -310,7 +319,10 @@ with tab_primary:
 
         if filename.endswith((".png", ".jpg", ".jpeg")):
             st.session_state["active_upload_type"] = "image"
-            st.session_state["active_uploaded_image_path"] = persist_uploaded_image(uploaded_file)
+            st.session_state["active_uploaded_image_path"] = persist_uploaded_image(
+                uploaded_file,
+                target_date=st.session_state.get("active_order_date", date.today()).isoformat()
+            )
 
             image = read_image(uploaded_file)
 
@@ -561,6 +573,7 @@ with tab_primary:
                 final_df,
                 source_file=source_file,
                 replace_existing=True,
+                target_date=st.session_state.get("active_order_date", date.today()).isoformat(),
                 upload_type=st.session_state.get("active_upload_type", ""),
                 uploaded_image_path=st.session_state.get("active_uploaded_image_path", ""),
                 client_name=st.session_state.get("active_client_name", ""),
@@ -576,6 +589,7 @@ with tab_primary:
                     secrets=st.secrets,
                     gspread_module=gspread,
                     credentials_cls=Credentials,
+                    target_date=st.session_state.get("active_order_date", date.today()).isoformat(),
                 )
                 if push_ok:
                     st.info(push_msg)

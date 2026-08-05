@@ -51,11 +51,11 @@ def load_saved_rows_for_today():
         return pd.DataFrame()
 
 
-def persist_uploaded_image(uploaded_image_file):
+def persist_uploaded_image(uploaded_image_file, target_date=None):
     if uploaded_image_file is None:
         return ""
 
-    date_str = date.today().isoformat()
+    date_str = target_date if target_date else date.today().isoformat()
     upload_dir = Path("outputs") / "uploads" / date_str
     upload_dir.mkdir(parents=True, exist_ok=True)
 
