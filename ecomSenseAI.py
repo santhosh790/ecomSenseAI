@@ -834,17 +834,6 @@ with tab_consolidated:
                         ]
                     
                     if available_clients:
-                        select_all_clients = st.checkbox(
-                            "All Clients",
-                            value=True,
-                            key="select_all_clients_consolidated",
-                            help="Select/deselect all clients"
-                        )
-                        
-                        if select_all_clients:
-                            selected_clients = available_clients
-                            st.caption(f"✓ All {len(available_clients)} clients selected")
-                        else:
                             selected_clients = st.multiselect(
                                 "Select Clients",
                                 options=available_clients,
@@ -862,17 +851,6 @@ with tab_consolidated:
                         available_items = sorted(saved_by_date_df["Tamil Name"].astype(str).str.strip().unique().tolist())
                     
                     if available_items:
-                        select_all_items = st.checkbox(
-                            "All Items",
-                            value=True,
-                            key="select_all_items_consolidated",
-                            help="Select/deselect all items"
-                        )
-                        
-                        if select_all_items:
-                            selected_items = available_items
-                            st.caption(f"✓ All {len(available_items)} items selected")
-                        else:
                             selected_items = st.multiselect(
                                 "Select Items",
                                 options=available_items,
@@ -905,7 +883,7 @@ with tab_consolidated:
                 else:
                     include_client_columns = st.checkbox(
                         "Include client-wise columns in consolidated downloads",
-                        value=False,
+                        value=True,
                         key="include_client_columns_consolidated",
                         help="Adds one quantity column per client in consolidated output.",
                     )
