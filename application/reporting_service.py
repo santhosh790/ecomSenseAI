@@ -65,12 +65,24 @@ def consolidate(df):
         return df
 
     working_df = _prepare_quantity_fields(df)
+    
+    # Preserve original order by creating a mapping of first occurrence index
+    first_occurrence = {}
+    for idx, tamil_name in enumerate(working_df['Tamil Name']):
+        if tamil_name not in first_occurrence:
+            first_occurrence[tamil_name] = idx
+    
+    # Add order column based on first occurrence
+    working_df['_original_order'] = working_df['Tamil Name'].map(first_occurrence)
 
     result = (
-        working_df.groupby(["Tamil Name", "Unit"])["Quantity_Value"]
+        working_df.groupby(["Tamil Name", "Unit", "_original_order"])["Quantity_Value"]
         .sum()
         .reset_index()
     )
+    
+    # Sort by original order, then drop the order column
+    result = result.sort_values('_original_order').drop(columns=['_original_order'])
 
     result.rename(columns={"Quantity_Value": "Total Quantity"}, inplace=True)
     return result
@@ -86,10 +98,19 @@ def consolidate_with_client_columns(df):
     working_df = _prepare_quantity_fields(df)
     working_df["Client Name"] = working_df["Client Name"].astype(str).str.strip()
     working_df["Client Name"] = working_df["Client Name"].replace({"": "Unknown Client"})
+    
+    # Preserve original order by creating a mapping of first occurrence index
+    first_occurrence = {}
+    for idx, tamil_name in enumerate(working_df['Tamil Name']):
+        if tamil_name not in first_occurrence:
+            first_occurrence[tamil_name] = idx
+    
+    # Add order column based on first occurrence
+    working_df['_original_order'] = working_df['Tamil Name'].map(first_occurrence)
 
     pivot_df = (
         working_df.pivot_table(
-            index=["Tamil Name", "Unit"],
+            index=["Tamil Name", "Unit", "_original_order"],
             columns="Client Name",
             values="Quantity_Value",
             aggfunc="sum",
@@ -97,6 +118,9 @@ def consolidate_with_client_columns(df):
         )
         .reset_index()
     )
+    
+    # Sort by original order, then drop the order column
+    pivot_df = pivot_df.sort_values('_original_order').drop(columns=['_original_order'])
 
     client_cols = [col for col in pivot_df.columns if col not in ["Tamil Name", "Unit"]]
     if client_cols:
@@ -182,9 +206,7 @@ def export_excel(
     tamil_font_name = "Nirmala UI"
     export_df = df.copy()
     
-    # Sort by category (vegetables first, then fruits), each group alphabetically
-    if 'Tamil Name' in export_df.columns:
-        export_df = _sort_items_by_category(export_df, 'Tamil Name')
+    # Preserve original extraction order (no sorting)
     
     # Rename columns to Tamil
     column_rename_map = {
@@ -262,10 +284,8 @@ def export_pdf(
     date_str = date.today().strftime("%d-%m-%Y")
     client_text = str(client_name or "").strip()
     
-    # Sort by category (vegetables first, then fruits), each group alphabetically
+    # Preserve original extraction order (no sorting)
     df_sorted = df.copy()
-    if 'Tamil Name' in df_sorted.columns:
-        df_sorted = _sort_items_by_category(df_sorted, 'Tamil Name')
     df = df_sorted
 
     client_cols = [
@@ -470,13 +490,8 @@ def export_delivery_challan_excel(
     if not invoice_date:
         invoice_date = date.today().strftime("%d-%m-%Y")
     
-    # Sort by category (vegetables first, then fruits), each group alphabetically
+    # Preserve original extraction order (no sorting)
     df_sorted = df.copy()
-    if 'Source Name' in df_sorted.columns:
-        # For delivery challan, create a temporary Tamil Name column for sorting
-        df_sorted['_temp_tamil'] = df_sorted['Source Name'].apply(lambda x: f"({x})")
-        df_sorted = _sort_items_by_category(df_sorted, '_temp_tamil')
-        df_sorted = df_sorted.drop(columns=['_temp_tamil'])
     df = df_sorted
 
     wb = Workbook()
@@ -810,13 +825,8 @@ def export_delivery_challan_pdf(
     if not invoice_date:
         invoice_date = date.today().strftime("%d-%m-%Y")
     
-    # Sort by category (vegetables first, then fruits), each group alphabetically
+    # Preserve original extraction order (no sorting)
     df_sorted = df.copy()
-    if 'Source Name' in df_sorted.columns:
-        # For delivery challan, create a temporary Tamil Name column for sorting
-        df_sorted['_temp_tamil'] = df_sorted['Source Name'].apply(lambda x: f"({x})")
-        df_sorted = _sort_items_by_category(df_sorted, '_temp_tamil')
-        df_sorted = df_sorted.drop(columns=['_temp_tamil'])
     df = df_sorted
 
     # Build items table rows

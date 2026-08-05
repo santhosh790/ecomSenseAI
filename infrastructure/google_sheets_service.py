@@ -7,6 +7,10 @@ def push_validated_items_to_google_sheet(
     gspread_module,
     credentials_cls,
 ):
+    """
+    Push validated items to Google Sheets with Order column to preserve extraction sequence.
+    Sheet Format: Order | Date | [original columns...]
+    """
     if df is None or len(df) == 0:
         return False, "No validated rows to push."
 
@@ -40,8 +44,18 @@ def push_validated_items_to_google_sheet(
             worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows=1000, cols=20)
 
         push_df = df.copy()
+        # Add Order column (1-based sequence) as first column
+        push_df.insert(0, "Order", range(1, len(push_df) + 1))
+        # Add Date column
         push_df["Date"] = date.today().isoformat()
         push_df = push_df.fillna("")
+        
+        # Reorder columns to put Order and Date first
+        cols = push_df.columns.tolist()
+        # Move Order to first, Date to second
+        cols.remove("Order")
+        cols.remove("Date")
+        push_df = push_df[["Order", "Date"] + cols]
 
         headers = [str(col) for col in push_df.columns]
         values = push_df.astype(str).values.tolist()
@@ -69,7 +83,8 @@ def push_consolidated_to_google_sheet(
     Push consolidated data to Google Sheets with upsert logic based on primary key.
     Transforms wide format (client columns) to long format (one row per client per item).
     Primary Key: Date + ClientName + Item
-    Sheet Format: Date | ClientName | Item | Unit | Quantity
+    Sheet Format: Order | Date | ClientName | Item | Unit | Quantity
+    Order column preserves the original extraction sequence to maintain item ordering.
     """
     if df is None or len(df) == 0:
         return False, "No consolidated rows to push."
@@ -114,10 +129,10 @@ def push_consolidated_to_google_sheet(
         if not client_cols:
             return False, "No client columns found in consolidated data."
         
-        # Prepare long format data
+        # Prepare long format data with order preservation
         long_format_rows = []
         
-        for _, row in df.iterrows():
+        for item_order, (_, row) in enumerate(df.iterrows(), start=1):
             tamil_name = str(row.get("Tamil Name", "")).strip()
             unit = str(row.get("Unit", "")).strip()
             
@@ -133,8 +148,9 @@ def push_consolidated_to_google_sheet(
                 except (ValueError, TypeError):
                     continue
                 
-                # Add row: Date, ClientName, Item, Unit, Quantity
+                # Add row: Order, Date, ClientName, Item, Unit, Quantity
                 long_format_rows.append({
+                    "Order": item_order,
                     "Date": target_date,
                     "ClientName": client_col,
                     "Item": tamil_name,
@@ -145,12 +161,12 @@ def push_consolidated_to_google_sheet(
         if not long_format_rows:
             return False, "No non-zero quantities found to push."
         
-        # Create DataFrame with correct column order
+        # Create DataFrame with correct column order (Order first)
         push_df = pd.DataFrame(long_format_rows)
-        push_df = push_df[["Date", "ClientName", "Item", "Unit", "Quantity"]]
+        push_df = push_df[["Order", "Date", "ClientName", "Item", "Unit", "Quantity"]]
         push_df = push_df.fillna("")
         
-        headers = ["Date", "ClientName", "Item", "Unit", "Quantity"]
+        headers = ["Order", "Date", "ClientName", "Item", "Unit", "Quantity"]
         
         # Get existing data from sheet
         existing_header = worksheet.row_values(1)
@@ -172,10 +188,11 @@ def push_consolidated_to_google_sheet(
         # Build a lookup dictionary: (Date, ClientName, Item) -> (row_index, current_data)
         primary_key_lookup = {}
         for idx, row in enumerate(existing_rows, start=2):  # Row 2 is first data row (1 is header)
-            if len(row) >= 3:
-                date_val = row[0].strip()
-                client_val = row[1].strip()
-                item_val = row[2].strip()
+            if len(row) >= 4:  # Need at least Order, Date, ClientName, Item
+                # Columns: Order(0), Date(1), ClientName(2), Item(3), Unit(4), Quantity(5)
+                date_val = row[1].strip()
+                client_val = row[2].strip()
+                item_val = row[3].strip()
                 key = (date_val, client_val, item_val)
                 primary_key_lookup[key] = (idx, row)
         
@@ -195,8 +212,8 @@ def push_consolidated_to_google_sheet(
             if key in primary_key_lookup:
                 # Collect row update
                 row_idx, existing_row = primary_key_lookup[key]
-                # Create range string like "A2:E2"
-                range_str = f"A{row_idx}:E{row_idx}"
+                # Create range string like "A2:F2" (Order, Date, ClientName, Item, Unit, Quantity)
+                range_str = f"A{row_idx}:F{row_idx}"
                 rows_to_update.append({
                     'range': range_str,
                     'values': [row_values]

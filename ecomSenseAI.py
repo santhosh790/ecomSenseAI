@@ -537,7 +537,7 @@ with tab_primary:
         st.checkbox(
             "Also push confirmed rows to Google Sheet",
             key="push_gsheet_on_confirm",
-            help="CSV save is always done. Enable this only when Sheet secrets are configured.",
+            help="CSV save is always done. Enable this only when Sheet secrets are configured. Adds Order and Date columns to preserve extraction sequence.",
         )
 
         if st.button("✅ Confirm"):
@@ -798,86 +798,171 @@ with tab_consolidated:
             if saved_by_date_df.empty:
                 st.caption("No rows found for selected date.")
             else:
-                include_client_columns = st.checkbox(
-                    "Include client-wise columns in consolidated downloads",
-                    value=False,
-                    key="include_client_columns_consolidated",
-                    help="Adds one quantity column per client in consolidated output.",
-                )
-
-                if include_client_columns:
-                    final_df = consolidate_with_client_columns(saved_by_date_df)
-                else:
-                    final_df = consolidate(saved_by_date_df)
-
-                consolidated_clients = []
-                if "Client Name" in saved_by_date_df.columns:
-                    consolidated_clients = [
-                        name
-                        for name in sorted(saved_by_date_df["Client Name"].astype(str).str.strip().unique().tolist())
-                        if name
-                    ]
-                consolidated_client_name = ", ".join(consolidated_clients)
-
-                if consolidated_client_name:
-                    st.info(f"Client Name(s): {consolidated_client_name}")
-
-                st.dataframe(final_df, use_container_width=True)
-
-                # Google Sheets push option
-                push_consolidated_checkbox = st.checkbox(
-                    "Push consolidated data to Google Sheet",
-                    value=False,
-                    key="push_consolidated_gsheet",
-                    help="Push to 'consolidated' sheet. Transforms data to: Date | ClientName | Item | Unit | Quantity (one row per client per item). Primary key: Date+ClientName+Item.",
-                )
-
-                if push_consolidated_checkbox:
-                    if st.button("📤 Push to Google Sheets", key="push_consolidated_btn"):
-                        push_ok, push_msg = push_consolidated_to_google_sheet(
-                            final_df,
-                            target_date=selected_records_date,
-                            client_names=consolidated_client_name,
-                            secrets=st.secrets,
-                            gspread_module=gspread,
-                            credentials_cls=Credentials,
+                # Filter options
+                st.markdown("### 🔍 Filters")
+                
+                filter_col1, filter_col2 = st.columns(2)
+                
+                with filter_col1:
+                    # Client filter
+                    available_clients = []
+                    if "Client Name" in saved_by_date_df.columns:
+                        available_clients = [
+                            name
+                            for name in sorted(saved_by_date_df["Client Name"].astype(str).str.strip().unique().tolist())
+                            if name
+                        ]
+                    
+                    if available_clients:
+                        select_all_clients = st.checkbox(
+                            "All Clients",
+                            value=True,
+                            key="select_all_clients_consolidated",
+                            help="Select/deselect all clients"
                         )
-                        if push_ok:
-                            st.success(push_msg)
+                        
+                        if select_all_clients:
+                            selected_clients = available_clients
+                            st.caption(f"✓ All {len(available_clients)} clients selected")
                         else:
-                            st.error(push_msg)
+                            selected_clients = st.multiselect(
+                                "Select Clients",
+                                options=available_clients,
+                                default=[],
+                                key="filter_clients_consolidated",
+                                help="Select which clients to include in consolidation."
+                            )
+                    else:
+                        selected_clients = []
+                
+                with filter_col2:
+                    # Item filter
+                    available_items = []
+                    if "Tamil Name" in saved_by_date_df.columns:
+                        available_items = sorted(saved_by_date_df["Tamil Name"].astype(str).str.strip().unique().tolist())
+                    
+                    if available_items:
+                        select_all_items = st.checkbox(
+                            "All Items",
+                            value=True,
+                            key="select_all_items_consolidated",
+                            help="Select/deselect all items"
+                        )
+                        
+                        if select_all_items:
+                            selected_items = available_items
+                            st.caption(f"✓ All {len(available_items)} items selected")
+                        else:
+                            selected_items = st.multiselect(
+                                "Select Items",
+                                options=available_items,
+                                default=[],
+                                key="filter_items_consolidated",
+                                help="Select which items to include in consolidation."
+                            )
+                    else:
+                        selected_items = []
+                
+                # Apply filters
+                filtered_df = saved_by_date_df.copy()
+                
+                if selected_clients and "Client Name" in filtered_df.columns:
+                    filtered_df = filtered_df[filtered_df["Client Name"].astype(str).str.strip().isin(selected_clients)]
+                
+                if selected_items and "Tamil Name" in filtered_df.columns:
+                    filtered_df = filtered_df[filtered_df["Tamil Name"].astype(str).str.strip().isin(selected_items)]
+                
+                # Show filter summary
+                if len(filtered_df) != len(saved_by_date_df):
+                    st.info(
+                        f"📊 Filtered: {len(filtered_df)} rows (from {len(saved_by_date_df)} total) | "
+                        f"Clients: {len(selected_clients)}/{len(available_clients)} | "
+                        f"Items: {len(selected_items)}/{len(available_items)}"
+                    )
+                
+                if filtered_df.empty:
+                    st.warning("No data matches the selected filters. Please adjust your selection.")
+                else:
+                    include_client_columns = st.checkbox(
+                        "Include client-wise columns in consolidated downloads",
+                        value=False,
+                        key="include_client_columns_consolidated",
+                        help="Adds one quantity column per client in consolidated output.",
+                    )
 
-                dl_header, dl_above, dl_footer = get_download_text_customization("consolidated")
+                    if include_client_columns:
+                        final_df = consolidate_with_client_columns(filtered_df)
+                    else:
+                        final_df = consolidate(filtered_df)
 
-                excel_file = export_excel(
-                    final_df,
-                    logo_path=get_default_logo_path(),
-                    header_text=dl_header,
-                    above_list_text=dl_above,
-                    footer_text=dl_footer,
-                    client_name=consolidated_client_name,
-                )
+                    consolidated_clients = []
+                    if "Client Name" in filtered_df.columns:
+                        consolidated_clients = [
+                            name
+                            for name in sorted(filtered_df["Client Name"].astype(str).str.strip().unique().tolist())
+                            if name
+                        ]
+                    consolidated_client_name = ", ".join(consolidated_clients)
 
-                pdf_file = export_pdf(
-                    final_df,
-                    logo_data_uri=st.session_state.get("print_logo_data_uri", ""),
-                    header_text=dl_header,
-                    above_list_text=dl_above,
-                    footer_text=dl_footer,
-                    client_name=consolidated_client_name,
-                )
+                    if consolidated_client_name:
+                        st.info(f"Client Name(s): {consolidated_client_name}")
 
-                st.download_button(
-                    "⬇️ Download Consolidated Excel",
-                    excel_file,
-                    file_name=f"vegetables_{selected_records_date}.xlsx"
-                )
+                    st.dataframe(final_df, use_container_width=True)
 
-                st.download_button(
-                    "⬇️ Download Consolidated PDF",
-                    pdf_file,
-                    file_name=f"vegetables_{selected_records_date}.pdf"
-                )
+                    # Google Sheets push option
+                    push_consolidated_checkbox = st.checkbox(
+                        "Push consolidated data to Google Sheet",
+                        value=False,
+                        key="push_consolidated_gsheet",
+                        help="Push to 'consolidated' sheet. Transforms data to: Order | Date | ClientName | Item | Unit | Quantity (one row per client per item). Order column preserves extraction sequence. Primary key: Date+ClientName+Item.",
+                    )
+
+                    if push_consolidated_checkbox:
+                        if st.button("📤 Push to Google Sheets", key="push_consolidated_btn"):
+                            push_ok, push_msg = push_consolidated_to_google_sheet(
+                                final_df,
+                                target_date=selected_records_date,
+                                client_names=consolidated_client_name,
+                                secrets=st.secrets,
+                                gspread_module=gspread,
+                                credentials_cls=Credentials,
+                            )
+                            if push_ok:
+                                st.success(push_msg)
+                            else:
+                                st.error(push_msg)
+
+                    dl_header, dl_above, dl_footer = get_download_text_customization("consolidated")
+
+                    excel_file = export_excel(
+                        final_df,
+                        logo_path=get_default_logo_path(),
+                        header_text=dl_header,
+                        above_list_text=dl_above,
+                        footer_text=dl_footer,
+                        client_name=consolidated_client_name,
+                    )
+
+                    pdf_file = export_pdf(
+                        final_df,
+                        logo_data_uri=st.session_state.get("print_logo_data_uri", ""),
+                        header_text=dl_header,
+                        above_list_text=dl_above,
+                        footer_text=dl_footer,
+                        client_name=consolidated_client_name,
+                    )
+
+                    st.download_button(
+                        "⬇️ Download Consolidated Excel",
+                        excel_file,
+                        file_name=f"vegetables_{selected_records_date}.xlsx"
+                    )
+
+                    st.download_button(
+                        "⬇️ Download Consolidated PDF",
+                        pdf_file,
+                        file_name=f"vegetables_{selected_records_date}.pdf"
+                    )
 
 
 with tab_challan:
