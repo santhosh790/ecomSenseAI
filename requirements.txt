@@ -1,17 +1,17 @@
 # Direct dependencies
 --extra-index-url https://www.paddlepaddle.org.cn/packages/stable/cpu/
 
-streamlit==1.60.0
-pandas==2.2.2
-numpy==1.26.4
-pymupdf==1.28.0
-pillow==12.3.0
-pytesseract==0.3.13
-opencv-python-headless
-rapidfuzz==3.14.1
-paddleocr==2.8.1
-paddlepaddle==3.3.0 ; platform_system == "Linux" and python_version >= "3.11" and python_version < "3.12"
-openpyxl==3.1.5
-weasyprint==69.0
-gspread==6.2.1
-google-auth==2.40.3
+streamlit>=1.40.0,<2.0.0
+pandas>=2.2.0,<3.0.0
+numpy>=1.26.0,<2.0.0
+pymupdf>=1.28.0
+pillow>=12.3.0
+pytesseract>=0.3.13
+opencv-python-headless>=4.10.0
+rapidfuzz>=3.14.0
+paddleocr>=2.8.0
+paddlepaddle>=3.3.0 ; platform_system == "Linux" and python_version >= "3.11" and python_version < "3.12"
+openpyxl>=3.1.0
+weasyprint>=69.0
+gspread>=6.2.0
+google-auth>=2.40.0

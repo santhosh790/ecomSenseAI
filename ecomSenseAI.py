@@ -1,41 +1,58 @@
 import streamlit as st
 import pandas as pd
 import shutil
+import logging
+import traceback
 from datetime import date
 from pathlib import Path
 
-from application.vegetable_detection_service import detect_vegetables as detect_vegetables_service
-from application.vegetable_detection_service import find_canonical_vegetable_name as find_canonical_vegetable_name_service
-from application.vegetable_catalog_service import load_vegetable_catalog
-from application.reporting_service import consolidate, consolidate_with_client_columns, export_excel, export_pdf, export_delivery_challan_excel, export_delivery_challan_pdf
-from application.extraction_service import normalize_text as normalize_text_service
-from infrastructure.assets_service import get_default_logo_data_uri, get_default_logo_path
-from infrastructure.document_readers import (
-    read_excel,
-    read_image,
-    read_pdf,
+# Configure logging for Streamlit Cloud
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-from infrastructure.google_sheets_service import push_validated_items_to_google_sheet, push_consolidated_to_google_sheet
-from infrastructure.ocr_engine import extract_image_text as extract_image_text_service
-from infrastructure.ocr_engine import load_ocr_model
-from infrastructure.address_service import (
-    load_addresses,
-    add_bill_to_address,
-    add_ship_to_address,
-    get_bill_to_names,
-    get_ship_to_names,
-    get_bill_to_address,
-    get_ship_to_address,
-)
-from infrastructure.persistence_service import (
-    get_csv_path_for_date,
-    list_saved_dates,
-    load_saved_rows_for_date,
-    load_saved_rows_for_today,
-    persist_uploaded_image,
-    remove_saved_file_from_csv,
-    save_validated_items_to_csv,
-)
+logger = logging.getLogger(__name__)
+
+# Import application services with error handling
+try:
+    from application.vegetable_detection_service import detect_vegetables as detect_vegetables_service
+    from application.vegetable_detection_service import find_canonical_vegetable_name as find_canonical_vegetable_name_service
+    from application.vegetable_catalog_service import load_vegetable_catalog
+    from application.reporting_service import consolidate, consolidate_with_client_columns, export_excel, export_pdf, export_delivery_challan_excel, export_delivery_challan_pdf
+    from application.extraction_service import normalize_text as normalize_text_service
+    from infrastructure.assets_service import get_default_logo_data_uri, get_default_logo_path
+    from infrastructure.document_readers import (
+        read_excel,
+        read_image,
+        read_pdf,
+    )
+    from infrastructure.google_sheets_service import push_validated_items_to_google_sheet, push_consolidated_to_google_sheet
+    from infrastructure.ocr_engine import extract_image_text as extract_image_text_service
+    from infrastructure.ocr_engine import load_ocr_model
+    from infrastructure.address_service import (
+        load_addresses,
+        add_bill_to_address,
+        add_ship_to_address,
+        get_bill_to_names,
+        get_ship_to_names,
+        get_bill_to_address,
+        get_ship_to_address,
+    )
+    from infrastructure.persistence_service import (
+        get_csv_path_for_date,
+        list_saved_dates,
+        load_saved_rows_for_date,
+        load_saved_rows_for_today,
+        persist_uploaded_image,
+        remove_saved_file_from_csv,
+        save_validated_items_to_csv,
+    )
+    logger.info("✓ All application modules loaded successfully")
+except Exception as e:
+    logger.error(f"Failed to import application modules: {e}\n{traceback.format_exc()}")
+    st.error(f"**Critical Import Error:** {e}")
+    st.code(traceback.format_exc())
+    st.stop()
 
 try:
     import pytesseract
@@ -100,6 +117,103 @@ if "active_upload_type" not in st.session_state:
 
 if "active_uploaded_image_path" not in st.session_state:
     st.session_state["active_uploaded_image_path"] = ""
+
+
+# ============================================================
+# DEPENDENCY HEALTH CHECK
+# ============================================================
+
+def check_deployment_health():
+    """Check and report on optional dependencies and system state."""
+    issues = []
+    warnings = []
+    info = []
+    
+    # Check Tesseract OCR
+    if pytesseract is None:
+        warnings.append("⚠️ Tesseract OCR not available - Image OCR disabled")
+    else:
+        tesseract_binary = shutil.which("tesseract")
+        if tesseract_binary:
+            info.append(f"✓ Tesseract OCR available at {tesseract_binary}")
+        else:
+            warnings.append("⚠️ Tesseract binary not found in PATH")
+    
+    # Check Google Sheets integration
+    if gspread is None or Credentials is None:
+        warnings.append("⚠️ Google Sheets integration not available")
+    else:
+        info.append("✓ Google Sheets integration available")
+    
+    # Check PaddleOCR
+    try:
+        import paddleocr
+        info.append("✓ PaddleOCR available")
+    except ImportError:
+        warnings.append("⚠️ PaddleOCR not available - Advanced OCR disabled")
+    except Exception as e:
+        warnings.append(f"⚠️ PaddleOCR error: {str(e)[:50]}")
+    
+    # Check WeasyPrint (for PDF export)
+    # Note: WeasyPrint requires system libraries that may not be available on macOS
+    # It works best on Linux (Streamlit Cloud uses Linux)
+    try:
+        import weasyprint
+        info.append("✓ WeasyPrint available for PDF export")
+    except ImportError:
+        warnings.append("⚠️ WeasyPrint not available - PDF export disabled")
+    except OSError as e:
+        # Common on macOS - missing system libraries
+        if "libgobject" in str(e) or "libcairo" in str(e):
+            warnings.append("⚠️ WeasyPrint: Missing system libraries (normal on macOS, works on Linux/Cloud)")
+        else:
+            warnings.append(f"⚠️ WeasyPrint error: {str(e)[:50]}")
+    except Exception as e:
+        warnings.append(f"⚠️ WeasyPrint error: {str(e)[:50]}")
+    
+    # Check OpenPyXL (for Excel export)
+    try:
+        import openpyxl
+        info.append("✓ OpenPyXL available for Excel export")
+    except ImportError:
+        issues.append("❌ OpenPyXL not available - Excel export disabled")
+    except Exception as e:
+        issues.append(f"❌ OpenPyXL error: {str(e)[:50]}")
+    
+    # Log everything
+    for msg in info:
+        logger.info(msg)
+    for msg in warnings:
+        logger.warning(msg)
+    for msg in issues:
+        logger.error(msg)
+    
+    # Display to user if there are issues or warnings
+    if issues or warnings:
+        with st.expander("⚙️ System Status", expanded=bool(issues)):
+            if issues:
+                st.error("**Critical Issues:**")
+                for issue in issues:
+                    st.write(issue)
+            if warnings:
+                st.warning("**Warnings:**")
+                for warning in warnings:
+                    st.write(warning)
+            if info:
+                st.info("**Available Features:**")
+                for i in info:
+                    st.write(i)
+    
+    return len(issues) == 0
+
+# Run health check
+try:
+    deployment_ok = check_deployment_health()
+    if not deployment_ok:
+        st.warning("⚠️ Some features may be limited due to missing dependencies")
+except Exception as e:
+    logger.error(f"Health check failed: {e}\n{traceback.format_exc()}")
+    st.error(f"Health check error: {e}")
 
 if "download_header_text" not in st.session_state:
     st.session_state["download_header_text"] = "PKS Fresh"
@@ -1247,3 +1361,28 @@ st.divider()
 st.caption(
     "Version 0.2 | OCR + quality review enabled"
 )
+
+# Deployment info for debugging
+with st.expander("ℹ️ Deployment Info", expanded=False):
+    import sys
+    import platform
+    st.write(f"**Python Version:** {sys.version}")
+    st.write(f"**Platform:** {platform.platform()}")
+    st.write(f"**Streamlit Version:** {st.__version__}")
+    st.write(f"**Working Directory:** {Path.cwd()}")
+    
+    # Show available features
+    features = []
+    if pytesseract is not None:
+        features.append("✓ Tesseract OCR")
+    if gspread is not None:
+        features.append("✓ Google Sheets")
+    try:
+        import paddleocr
+        features.append("✓ PaddleOCR")
+    except:
+        pass
+    
+    st.write(f"**Available Features:** {', '.join(features) if features else 'None'}")
+    
+    logger.info("App loaded successfully")
