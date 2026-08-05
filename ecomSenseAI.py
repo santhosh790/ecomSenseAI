@@ -565,6 +565,10 @@ with tab_primary:
             else:
                 final_df = edited_df.copy()
             
+            # Add Date column to preserve selected order date
+            selected_date = st.session_state.get("active_order_date", date.today()).isoformat()
+            final_df["Date"] = selected_date
+            
             st.session_state["validated_items"] = final_df
             st.success(f"✅ Validated successfully - {len(final_df)} item(s) confirmed")
 
@@ -762,6 +766,7 @@ with tab_saved:
                         above_list_text=dl_above,
                         footer_text=dl_footer,
                         client_name=client_name,
+                        order_date=selected_saved_date,
                     )
                     individual_pdf = export_pdf(
                         individual_df,
@@ -770,6 +775,7 @@ with tab_saved:
                         above_list_text=dl_above,
                         footer_text=dl_footer,
                         client_name=client_name,
+                        order_date=selected_saved_date
                     )
 
                     st.download_button(

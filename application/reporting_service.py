@@ -2,7 +2,7 @@ import io
 import os
 import re
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -66,6 +66,11 @@ def consolidate(df):
 
     working_df = _prepare_quantity_fields(df)
     
+    # Extract Date column if it exists (all rows should have same date)
+    date_value = None
+    if 'Date' in working_df.columns:
+        date_value = working_df['Date'].iloc[0] if not working_df.empty else None
+    
     # Preserve original order by creating a mapping of first occurrence index
     first_occurrence = {}
     for idx, tamil_name in enumerate(working_df['Tamil Name']):
@@ -83,6 +88,10 @@ def consolidate(df):
     
     # Sort by original order, then drop the order column
     result = result.sort_values('_original_order').drop(columns=['_original_order'])
+    
+    # Add back the Date column if it existed
+    if date_value is not None:
+        result['Date'] = date_value
 
     result.rename(columns={"Quantity_Value": "Total Quantity"}, inplace=True)
     return result
@@ -98,6 +107,11 @@ def consolidate_with_client_columns(df):
     working_df = _prepare_quantity_fields(df)
     working_df["Client Name"] = working_df["Client Name"].astype(str).str.strip()
     working_df["Client Name"] = working_df["Client Name"].replace({"": "Unknown Client"})
+    
+    # Extract Date column if it exists (all rows should have same date)
+    date_value = None
+    if 'Date' in working_df.columns:
+        date_value = working_df['Date'].iloc[0] if not working_df.empty else None
     
     # Preserve original order by creating a mapping of first occurrence index
     first_occurrence = {}
@@ -128,7 +142,15 @@ def consolidate_with_client_columns(df):
     else:
         pivot_df["Total Quantity"] = 0.0
 
-    return pivot_df[["Tamil Name", *client_cols, "Total Quantity", "Unit"]]
+    # Build result columns
+    result_cols = ["Tamil Name", *client_cols, "Total Quantity", "Unit"]
+    
+    # Add Date column if it existed
+    if date_value is not None:
+        pivot_df['Date'] = date_value
+        result_cols.append('Date')
+
+    return pivot_df[result_cols]
 
 
 def _categorize_item(name):
@@ -195,6 +217,7 @@ def export_excel(
     above_list_text="காய்கறி பட்டியல்",
     footer_text="",
     client_name="",
+    order_date=None,
 ):
     from openpyxl.drawing.image import Image as XLImage
     from openpyxl.styles import Alignment
@@ -202,7 +225,23 @@ def export_excel(
     from openpyxl.utils import get_column_letter
 
     output = io.BytesIO()
-    date_str = date.today().strftime("%d-%m-%Y")
+    # Extract date from dataframe if available, otherwise use today
+    if "Date" in df.columns and not df.empty:
+        date_val = df["Date"].iloc[0]
+        try:
+            # Parse ISO format (YYYY-MM-DD) and convert to DD-MM-YYYY
+            date_obj = datetime.strptime(str(date_val), "%Y-%m-%d")
+            date_str = date_obj.strftime("%d-%m-%Y")
+        except:
+            date_str = date.today().strftime("%d-%m-%Y")
+    else:
+        date_str = date.today().strftime("%d-%m-%Y")
+    if order_date:
+        try:
+            date_obj = datetime.strptime(str(order_date), "%Y-%m-%d")
+            date_str = date_obj.strftime("%d-%m-%Y")
+        except:
+            pass
     tamil_font_name = "Nirmala UI"
     export_df = df.copy()
     
@@ -277,11 +316,28 @@ def export_pdf(
     above_list_text="காய்கறி பட்டியல்",
     footer_text="",
     client_name="",
+    order_date=None,
 ):
     _configure_macos_weasyprint_loader_paths()
     from weasyprint import HTML
 
-    date_str = date.today().strftime("%d-%m-%Y")
+    # Extract date from dataframe if available, otherwise use today
+    if "Date" in df.columns and not df.empty:
+        date_val = df["Date"].iloc[0]
+        try:
+            # Parse ISO format (YYYY-MM-DD) and convert to DD-MM-YYYY
+            date_obj = datetime.strptime(str(date_val), "%Y-%m-%d")
+            date_str = date_obj.strftime("%d-%m-%Y")
+        except:
+            date_str = date.today().strftime("%d-%m-%Y")
+    else:
+        date_str = date.today().strftime("%d-%m-%Y")
+    if order_date:
+        try:
+            date_obj = datetime.strptime(str(order_date), "%Y-%m-%d")
+            date_str = date_obj.strftime("%d-%m-%Y")
+        except:
+            pass
     client_text = str(client_name or "").strip()
     
     # Preserve original extraction order (no sorting)
@@ -488,7 +544,17 @@ def export_delivery_challan_excel(
     from openpyxl.utils import get_column_letter
 
     if not invoice_date:
-        invoice_date = date.today().strftime("%d-%m-%Y")
+        # Extract date from dataframe if available, otherwise use today
+        if "Date" in df.columns and not df.empty:
+            date_val = df["Date"].iloc[0]
+            try:
+                # Parse ISO format (YYYY-MM-DD) and convert to DD-MM-YYYY
+                date_obj = datetime.strptime(str(date_val), "%Y-%m-%d")
+                invoice_date = date_obj.strftime("%d-%m-%Y")
+            except:
+                invoice_date = date.today().strftime("%d-%m-%Y")
+        else:
+            invoice_date = date.today().strftime("%d-%m-%Y")
     
     # Preserve original extraction order (no sorting)
     df_sorted = df.copy()
@@ -823,7 +889,17 @@ def export_delivery_challan_pdf(
     from weasyprint import HTML
 
     if not invoice_date:
-        invoice_date = date.today().strftime("%d-%m-%Y")
+        # Extract date from dataframe if available, otherwise use today
+        if "Date" in df.columns and not df.empty:
+            date_val = df["Date"].iloc[0]
+            try:
+                # Parse ISO format (YYYY-MM-DD) and convert to DD-MM-YYYY
+                date_obj = datetime.strptime(str(date_val), "%Y-%m-%d")
+                invoice_date = date_obj.strftime("%d-%m-%Y")
+            except:
+                invoice_date = date.today().strftime("%d-%m-%Y")
+        else:
+            invoice_date = date.today().strftime("%d-%m-%Y")
     
     # Preserve original extraction order (no sorting)
     df_sorted = df.copy()
