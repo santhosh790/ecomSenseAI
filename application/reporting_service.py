@@ -89,9 +89,8 @@ def consolidate(df):
     # Sort by original order, then drop the order column
     result = result.sort_values('_original_order').drop(columns=['_original_order'])
     
-    # Add back the Date column if it existed
-    if date_value is not None:
-        result['Date'] = date_value
+    # Note: Date column is NOT added back to result since it's shown in the report header
+    # The date_value is only used for extracting the date for the header in export functions
 
     result.rename(columns={"Quantity_Value": "Total Quantity"}, inplace=True)
     return result
@@ -145,10 +144,8 @@ def consolidate_with_client_columns(df):
     # Build result columns
     result_cols = ["Tamil Name", *client_cols, "Total Quantity", "Unit"]
     
-    # Add Date column if it existed
-    if date_value is not None:
-        pivot_df['Date'] = date_value
-        result_cols.append('Date')
+    # Note: Date column is NOT added back to result since it's shown in the report header
+    # The date_value is only used for extracting the date for the header in export functions
 
     return pivot_df[result_cols]
 
@@ -439,7 +436,7 @@ def export_pdf(
     margin: 2px 0 0 0;
   }}
   .date-line {{
-    font-size: 10px;
+    font-size: 12px;
     color: #444;
     margin-bottom: 8px;
   }}
@@ -453,13 +450,13 @@ def export_pdf(
   }}
   th {{
     padding: 6px 10px;
-    font-size: 12px;
+    font-size: 15px;
     text-align: left;
   }}
   th.num {{ text-align: right; }}
   td {{
     padding: 5px 10px;
-    font-size: 11px;
+    font-size: 14px;
     border-bottom: 1px solid #ddd;
   }}
   td.num {{ text-align: right; }}

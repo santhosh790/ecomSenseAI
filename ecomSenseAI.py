@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import json
 import shutil
 import logging
 import traceback
@@ -71,6 +72,75 @@ if pytesseract is not None:
     tesseract_binary = shutil.which("tesseract")
     if tesseract_binary:
         pytesseract.pytesseract.tesseract_cmd = tesseract_binary
+
+
+# ============================================================
+# CLIENT MANAGEMENT
+# ============================================================
+
+def load_clients():
+    """Load client names from data/clients.json file.
+    Returns dict mapping full name to short name.
+    """
+    clients_file = Path("data") / "clients.json"
+    if not clients_file.exists():
+        return {}
+    
+    try:
+        with open(clients_file, 'r', encoding='utf-8') as f:
+            clients_dict = json.load(f)
+        return clients_dict
+    except Exception as e:
+        logger.error(f"Error loading clients: {e}")
+        return {}
+
+def get_client_full_names():
+    """Get list of full client names for dropdown selection."""
+    clients_dict = load_clients()
+    return sorted(clients_dict.keys())
+
+def get_client_short_name(full_name):
+    """Get short name for a client given the full name."""
+    clients_dict = load_clients()
+    return clients_dict.get(full_name, full_name)  # Fallback to full name if not found
+
+def save_client(new_client_full, new_client_short=None):
+    """Add a new client to data/clients.json file.
+    
+    Args:
+        new_client_full: Full client name
+        new_client_short: Short name for reports (defaults to full name if not provided)
+    """
+    if not new_client_full or not new_client_full.strip():
+        return False
+    
+    new_client_full = new_client_full.strip()
+    new_client_short = (new_client_short or new_client_full).strip()
+    
+    # Load existing clients
+    existing_clients = load_clients()
+    
+    # Check if client already exists (case-insensitive)
+    if new_client_full.upper() in [c.upper() for c in existing_clients.keys()]:
+        return False  # Already exists
+    
+    # Add new client
+    existing_clients[new_client_full] = new_client_short
+    
+    # Save back to file
+    clients_file = Path("data") / "clients.json"
+    clients_file.parent.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        # Write as JSON with sorted keys
+        sorted_clients = dict(sorted(existing_clients.items()))
+        with open(clients_file, 'w', encoding='utf-8') as f:
+            json.dump(sorted_clients, f, indent=4, ensure_ascii=False)
+        logger.info(f"Added new client: {new_client_full} -> {new_client_short}")
+        return True
+    except Exception as e:
+        logger.error(f"Error saving client: {e}")
+        return False
 
 
 # ============================================================
@@ -371,12 +441,63 @@ with tab_primary:
         key="order_date_selector",
     )
     
-    st.session_state["active_client_name"] = st.text_input(
+    # Client Name Selection with Add New option
+    available_clients = get_client_full_names()
+    client_options = available_clients + ["➕ Add New Client..."]
+    
+    # Get current client or empty string
+    current_client = st.session_state.get("active_client_name", "")
+    
+    # Determine default index
+    if current_client and current_client in available_clients:
+        default_idx = available_clients.index(current_client)
+    else:
+        default_idx = len(available_clients)  # "Add New Client..." option
+    
+    selected_client = st.selectbox(
         "Client Name",
-        value=st.session_state.get("active_client_name", ""),
-        help="Enter the actual client name (e.g., 'MRF', 'VIT Canteen'). Saved to CSV for record-keeping.",
-        placeholder="Enter client name",
-    ).strip()
+        options=client_options,
+        index=0,
+        help="Select existing client or add a new one. Full name shown in dropdown, short name used in reports.",
+        key="client_name_selector",
+    )
+    
+    # Handle "Add New Client" option
+    if selected_client == "➕ Add New Client...":
+        col1, col2 = st.columns([2, 2])
+        with col1:
+            new_client_full = st.text_input(
+                "Full Client Name",
+                value="",
+                placeholder="e.g., 'RASSENSE PVT LTD'",
+                key="new_client_full_input",
+            )
+        with col2:
+            new_client_short = st.text_input(
+                "Short Name (for reports)",
+                value="",
+                placeholder="e.g., 'RASSENSE'",
+                key="new_client_short_input",
+            )
+        
+        col_btn1, col_btn2 = st.columns([1, 3])
+        with col_btn1:
+            if st.button("💾 Save", key="save_new_client"):
+                if new_client_full.strip():
+                    short_name = new_client_short.strip() or new_client_full.strip()
+                    if save_client(new_client_full.strip(), short_name):
+                        st.session_state["active_client_name"] = new_client_full.strip()
+                        st.success(f"✅ Added: {new_client_full.strip()} → {short_name}")
+                        st.rerun()
+                    else:
+                        st.warning("⚠️ Client already exists")
+                else:
+                    st.warning("⚠️ Please enter a client name")
+        # Keep previous client while adding new
+        if not new_client_full:
+            st.session_state["active_client_name"] = current_client
+    else:
+        st.session_state["active_client_name"] = selected_client
     
     # Parser selection dropdown
     parser_options = ["Generic", "VIT", "FVIT", "MHS"]
@@ -716,18 +837,30 @@ with tab_primary:
 
         if len(st.session_state["validated_items"]):
             st.subheader("✅ Confirmed Output")
-            confirmed_df = consolidate(st.session_state["validated_items"])
+            
+            # Extract date from validated_items for use in report headers
+            validated_items_df = st.session_state["validated_items"]
+            order_date_for_export = None
+            if "Date" in validated_items_df.columns and not validated_items_df.empty:
+                order_date_for_export = validated_items_df["Date"].iloc[0]
+            
+            confirmed_df = consolidate(validated_items_df)
             st.dataframe(confirmed_df, use_container_width=True)
 
             dl_header, dl_above, dl_footer = get_download_text_customization("confirmed")
 
+            # Get short name for reports
+            client_full_name = st.session_state.get("active_client_name", "")
+            client_short_name = get_client_short_name(client_full_name) if client_full_name else ""
+            
             confirmed_excel = export_excel(
                 confirmed_df,
                 logo_path=get_default_logo_path(),
                 header_text=dl_header,
                 above_list_text=dl_above,
                 footer_text=dl_footer,
-                client_name=st.session_state.get("active_client_name", ""),
+                client_name=client_short_name,
+                order_date=order_date_for_export,
             )
             confirmed_pdf = export_pdf(
                 confirmed_df,
@@ -735,7 +868,8 @@ with tab_primary:
                 header_text=dl_header,
                 above_list_text=dl_above,
                 footer_text=dl_footer,
-                client_name=st.session_state.get("active_client_name", ""),
+                client_name=client_short_name,
+                order_date=order_date_for_export,
             )
 
             st.download_button(
@@ -873,13 +1007,16 @@ with tab_saved:
 
                     dl_header, dl_above, dl_footer = get_download_text_customization("individual")
 
+                    # Get short name for reports
+                    client_short_name = get_client_short_name(client_name) if client_name else ""
+                    
                     individual_excel = export_excel(
                         individual_df,
                         logo_path=get_default_logo_path(),
                         header_text=dl_header,
                         above_list_text=dl_above,
                         footer_text=dl_footer,
-                        client_name=client_name,
+                        client_name=client_short_name,
                         order_date=selected_saved_date,
                     )
                     individual_pdf = export_pdf(
@@ -888,7 +1025,7 @@ with tab_saved:
                         header_text=dl_header,
                         above_list_text=dl_above,
                         footer_text=dl_footer,
-                        client_name=client_name,
+                        client_name=client_short_name,
                         order_date=selected_saved_date
                     )
 
@@ -1046,13 +1183,21 @@ with tab_consolidated:
 
                     dl_header, dl_above, dl_footer = get_download_text_customization("consolidated")
 
+                    # Get short name for reports (consolidated may have multiple clients)
+                    # For single client, use short name; for multiple, keep as-is
+                    client_display_name = consolidated_client_name
+                    if consolidated_client_name and ", " not in consolidated_client_name:
+                        # Single client - use short name
+                        client_display_name = get_client_short_name(consolidated_client_name)
+                    
                     excel_file = export_excel(
                         final_df,
                         logo_path=get_default_logo_path(),
                         header_text=dl_header,
                         above_list_text=dl_above,
                         footer_text=dl_footer,
-                        client_name=consolidated_client_name,
+                        client_name=client_display_name,
+                        order_date=selected_records_date,
                     )
 
                     pdf_file = export_pdf(
@@ -1061,7 +1206,8 @@ with tab_consolidated:
                         header_text=dl_header,
                         above_list_text=dl_above,
                         footer_text=dl_footer,
-                        client_name=consolidated_client_name,
+                        client_name=client_display_name,
+                        order_date=selected_records_date,
                     )
 
                     st.download_button(
