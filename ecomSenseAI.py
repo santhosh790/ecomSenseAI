@@ -939,7 +939,9 @@ with tab_saved:
                         client_name = str(selected_df["Client Name"].iloc[0]).strip()
 
                     if client_name:
-                        st.info(f"Client Name: {client_name}")
+                        # Convert to short name for display
+                        client_short_name = get_client_short_name(client_name)
+                        st.info(f"Client Name: {client_short_name}")
 
                     if selected_saved_date == date.today().isoformat() and img_path and Path(img_path).exists():
                         st.image(img_path, caption=f"Uploaded image: {selected_saved_file}", use_container_width=True)
@@ -1146,11 +1148,14 @@ with tab_consolidated:
 
                     consolidated_clients = []
                     if "Client Name" in filtered_df.columns:
-                        consolidated_clients = [
+                        # Get full names from CSV and convert to short names
+                        full_names = [
                             name
                             for name in sorted(filtered_df["Client Name"].astype(str).str.strip().unique().tolist())
                             if name
                         ]
+                        # Convert each full name to short name
+                        consolidated_clients = [get_client_short_name(name) for name in full_names]
                     consolidated_client_name = ", ".join(consolidated_clients)
 
                     if consolidated_client_name:
@@ -1183,12 +1188,8 @@ with tab_consolidated:
 
                     dl_header, dl_above, dl_footer = get_download_text_customization("consolidated")
 
-                    # Get short name for reports (consolidated may have multiple clients)
-                    # For single client, use short name; for multiple, keep as-is
-                    client_display_name = consolidated_client_name
-                    if consolidated_client_name and ", " not in consolidated_client_name:
-                        # Single client - use short name
-                        client_display_name = get_client_short_name(consolidated_client_name)
+                    # consolidated_client_name already contains short names (converted earlier)
+                    # Use it directly for reports
                     
                     excel_file = export_excel(
                         final_df,
@@ -1196,7 +1197,7 @@ with tab_consolidated:
                         header_text=dl_header,
                         above_list_text=dl_above,
                         footer_text=dl_footer,
-                        client_name=client_display_name,
+                        client_name=consolidated_client_name,
                         order_date=selected_records_date,
                     )
 
@@ -1206,7 +1207,7 @@ with tab_consolidated:
                         header_text=dl_header,
                         above_list_text=dl_above,
                         footer_text=dl_footer,
-                        client_name=client_display_name,
+                        client_name=consolidated_client_name,
                         order_date=selected_records_date,
                     )
 
@@ -1274,8 +1275,11 @@ with tab_challan:
                     client_name = ""
                     if "Client Name" in selected_df.columns and not selected_df.empty:
                         client_name = str(selected_df["Client Name"].iloc[0]).strip()
+                    
+                    # Convert to short name for display
+                    client_display = get_client_short_name(client_name) if client_name else ""
 
-                    st.info(f"Order: {selected_challan_file} | Items: {len(selected_df)}" + (f" | Client: {client_name}" if client_name else ""))
+                    st.info(f"Order: {selected_challan_file} | Items: {len(selected_df)}" + (f" | Client: {client_display}" if client_display else ""))
 
                     # Challan details input
                     col1, col2, col3 = st.columns(3)

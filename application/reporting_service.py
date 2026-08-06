@@ -135,7 +135,35 @@ def consolidate_with_client_columns(df):
     # Sort by original order, then drop the order column
     pivot_df = pivot_df.sort_values('_original_order').drop(columns=['_original_order'])
 
+    # Convert client column names from full names to short names
     client_cols = [col for col in pivot_df.columns if col not in ["Tamil Name", "Unit"]]
+    
+    # Import get_client_short_name to convert column names
+    import sys
+    import json
+    from pathlib import Path
+    
+    # Load clients.json to get short names
+    clients_file = Path(__file__).parent.parent / "data" / "clients.json"
+    clients_mapping = {}
+    if clients_file.exists():
+        try:
+            with open(clients_file, 'r', encoding='utf-8') as f:
+                clients_mapping = json.load(f)
+        except:
+            pass
+    
+    # Rename client columns to short names
+    column_rename = {}
+    for col in client_cols:
+        short_name = clients_mapping.get(col, col)  # Use short name if available, else keep original
+        column_rename[col] = short_name
+    
+    pivot_df = pivot_df.rename(columns=column_rename)
+    
+    # Update client_cols to use short names
+    client_cols = [column_rename.get(col, col) for col in client_cols]
+    
     if client_cols:
         pivot_df["Total Quantity"] = pivot_df[client_cols].sum(axis=1)
     else:
