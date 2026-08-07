@@ -285,15 +285,6 @@ except Exception as e:
     logger.error(f"Health check failed: {e}\n{traceback.format_exc()}")
     st.error(f"Health check error: {e}")
 
-if "download_header_text" not in st.session_state:
-    st.session_state["download_header_text"] = "PKS Fresh"
-
-if "download_above_list_text" not in st.session_state:
-    st.session_state["download_above_list_text"] = "காய்கறி பட்டியல்"
-
-if "download_footer_text" not in st.session_state:
-    st.session_state["download_footer_text"] = ""
-
 if "active_client_name" not in st.session_state:
     st.session_state["active_client_name"] = ""
 
@@ -361,33 +352,6 @@ def detect_vegetables(text, return_details=False, parser_selection=None):
         auto_extract_threshold=confidence_auto_extract_threshold,
         client_name=client_name,
     )
-
-
-def get_download_text_customization(scope_key):
-
-    with st.expander("📝 Download Text Customization", expanded=False):
-        header_text = st.text_input(
-            "Header",
-            value=st.session_state.get("download_header_text", "PKS Fresh"),
-            key=f"download_header_text_{scope_key}",
-        )
-        above_list_text = st.text_input(
-            "Just Above The List",
-            value=st.session_state.get("download_above_list_text", "காய்கறி பட்டியல்"),
-            key=f"download_above_list_text_{scope_key}",
-        )
-        footer_text = st.text_area(
-            "Footer",
-            value=st.session_state.get("download_footer_text", ""),
-            key=f"download_footer_text_{scope_key}",
-        )
-
-    st.session_state["download_header_text"] = header_text
-    st.session_state["download_above_list_text"] = above_list_text
-    st.session_state["download_footer_text"] = footer_text
-
-    return header_text, above_list_text, footer_text
-
 
 
 # ============================================================
@@ -847,8 +811,6 @@ with tab_primary:
             confirmed_df = consolidate(validated_items_df)
             st.dataframe(confirmed_df, use_container_width=True)
 
-            dl_header, dl_above, dl_footer = get_download_text_customization("confirmed")
-
             # Get short name for reports
             client_full_name = st.session_state.get("active_client_name", "")
             client_short_name = get_client_short_name(client_full_name) if client_full_name else ""
@@ -856,18 +818,18 @@ with tab_primary:
             confirmed_excel = export_excel(
                 confirmed_df,
                 logo_path=get_default_logo_path(),
-                header_text=dl_header,
-                above_list_text=dl_above,
-                footer_text=dl_footer,
+                header_text="PKS FRESH",
+                above_list_text="",
+                footer_text="",
                 client_name=client_short_name,
                 order_date=order_date_for_export,
             )
             confirmed_pdf = export_pdf(
                 confirmed_df,
                 logo_data_uri=st.session_state.get("print_logo_data_uri", ""),
-                header_text=dl_header,
-                above_list_text=dl_above,
-                footer_text=dl_footer,
+                header_text="PKS FRESH",
+                above_list_text="",
+                footer_text="",
                 client_name=client_short_name,
                 order_date=order_date_for_export,
             )
@@ -1007,26 +969,24 @@ with tab_saved:
                     st.markdown("### Download Individual Order")
                     st.dataframe(individual_df, use_container_width=True)
 
-                    dl_header, dl_above, dl_footer = get_download_text_customization("individual")
-
                     # Get short name for reports
                     client_short_name = get_client_short_name(client_name) if client_name else ""
                     
                     individual_excel = export_excel(
                         individual_df,
                         logo_path=get_default_logo_path(),
-                        header_text=dl_header,
-                        above_list_text=dl_above,
-                        footer_text=dl_footer,
+                        header_text="PKS FRESH",
+                        above_list_text="",
+                        footer_text="",
                         client_name=client_short_name,
                         order_date=selected_saved_date,
                     )
                     individual_pdf = export_pdf(
                         individual_df,
                         logo_data_uri=st.session_state.get("print_logo_data_uri", ""),
-                        header_text=dl_header,
-                        above_list_text=dl_above,
-                        footer_text=dl_footer,
+                        header_text="PKS FRESH",
+                        above_list_text="",
+                        footer_text="",
                         client_name=client_short_name,
                         order_date=selected_saved_date
                     )
@@ -1186,17 +1146,15 @@ with tab_consolidated:
                             else:
                                 st.error(push_msg)
 
-                    dl_header, dl_above, dl_footer = get_download_text_customization("consolidated")
-
                     # consolidated_client_name already contains short names (converted earlier)
                     # Use it directly for reports
                     
                     excel_file = export_excel(
                         final_df,
                         logo_path=get_default_logo_path(),
-                        header_text=dl_header,
-                        above_list_text=dl_above,
-                        footer_text=dl_footer,
+                        header_text="PKS FRESH",
+                        above_list_text="",
+                        footer_text="",
                         client_name=consolidated_client_name,
                         order_date=selected_records_date,
                     )
@@ -1204,9 +1162,9 @@ with tab_consolidated:
                     pdf_file = export_pdf(
                         final_df,
                         logo_data_uri=st.session_state.get("print_logo_data_uri", ""),
-                        header_text=dl_header,
-                        above_list_text=dl_above,
-                        footer_text=dl_footer,
+                        header_text="PKS FRESH",
+                        above_list_text="",
+                        footer_text="",
                         client_name=consolidated_client_name,
                         order_date=selected_records_date,
                     )

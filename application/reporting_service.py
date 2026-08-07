@@ -238,7 +238,7 @@ def _sort_items_by_category(df, name_column='Tamil Name'):
 def export_excel(
     df,
     logo_path="",
-    header_text="PKS Fresh",
+    header_text="PKS FRESH",
     above_list_text="காய்கறி பட்டியல்",
     footer_text="",
     client_name="",
@@ -275,7 +275,7 @@ def export_excel(
     # Rename columns to Tamil
     column_rename_map = {
         'Tamil Name': 'காய்கறி பெயர்',
-        'Total Quantity': 'மொத்த அளவு',
+        'Total Quantity': 'அளவு',
         'Unit': 'அலகு'
     }
     export_df = export_df.rename(columns=column_rename_map)
@@ -295,16 +295,19 @@ def export_excel(
 
         ws = writer.sheets["Vegetables"]
 
+        # Merge cells for centered header
+        ws.merge_cells('A1:D1')
         ws["A1"] = str(header_text or "")
         ws["A3"] = date_line_text
 
         ws["A1"].font = Font(size=18, bold=True)
         ws["A3"].font = Font(name=tamil_font_name, size=13)
 
-        ws["A1"].alignment = Alignment(horizontal="left")
+        ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
         ws["A3"].alignment = Alignment(horizontal="left")
 
         ws.column_dimensions["A"].width = 36
+        ws.row_dimensions[1].height = 30
         ws.row_dimensions[3].height = 24
 
         header_row = 7
@@ -325,11 +328,7 @@ def export_excel(
             ws[f"A{footer_row}"].font = Font(name=tamil_font_name, size=12, bold=True)
             ws[f"A{footer_row}"].alignment = Alignment(horizontal="left", wrap_text=True)
 
-        if logo_path and Path(logo_path).exists():
-            logo_img = XLImage(str(logo_path))
-            logo_img.height = 85
-            logo_img.width = 150
-            ws.add_image(logo_img, "D1")
+        # Logo removed for Excel export
 
     return output.getvalue()
 
@@ -337,7 +336,7 @@ def export_excel(
 def export_pdf(
     df,
     logo_data_uri="",
-    header_text="PKS Fresh",
+    header_text="PKS FRESH",
     above_list_text="காய்கறி பட்டியல்",
     footer_text="",
     client_name="",
@@ -484,7 +483,7 @@ def export_pdf(
   th.num {{ text-align: right; }}
   td {{
     padding: 5px 10px;
-    font-size: 14px;
+    font-size: 18px;
     border-bottom: 1px solid #ddd;
   }}
   td.num {{ text-align: right; }}
@@ -1086,7 +1085,7 @@ def export_delivery_challan_pdf(
         td {{
             border: 1px solid #ccc;
             padding: 6px;
-            font-size: 16px;  /* Increased from 9pt to 16px */
+            font-size: 18px;  /* Increased from 9pt to 16px */
         }}
         .total-row td {{
             font-weight: bold;

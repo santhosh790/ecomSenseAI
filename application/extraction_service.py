@@ -88,15 +88,51 @@ def extract_row_quantity(text):
 
 def extract_row_fields(text):
     compact = re.sub(r"\s+", " ", str(text)).strip()
+    # Remove packaging patterns like "1X1KG" BEFORE looking for qty+unit
     compact = re.sub(r"\b\d+\s*X+\s*\d+\s*(?:K+G|KGS|NOS|EA)\b", " ", compact, flags=re.IGNORECASE)
     compact = re.sub(r"\s+", " ", compact).strip()
 
+    # PRIORITY FIX: Look for quantity+unit pairs FIRST to avoid picking up prices/amounts
+    # This handles cases like "13 200.00 1100054 MUSHROOM FRESH 0.8 Kgs 250.00"
+    # where we want "0.8 Kgs" not "250"
+    # Find ALL qty+unit occurrences and pick the first valid one (after removing packaging format)
+    # Must use word boundaries and spacing to avoid matching partial numbers in item codes
+    qty_unit_matches = list(re.finditer(
+        r"(?<!\d)(\d+(?:\.\d+)?)\s+(KG|KGS|NOS|EA)\b",
+        compact,
+        flags=re.IGNORECASE,
+    ))
+    
+    if qty_unit_matches:
+        # Use the FIRST qty+unit match (leftmost in the string) that looks valid
+        first_qty_unit = qty_unit_matches[0]
+        qty_value = normalize_quantity_number(first_qty_unit.group(1))
+        unit_value = first_qty_unit.group(2).upper()
+        if unit_value in ["KGS", "KG"]:
+            unit_value = "KG"
+        
+        # Extract material from everything before the quantity+unit
+        material_end = first_qty_unit.start()
+        material_text = compact[:material_end].strip()
+        
+        # Clean up material: remove serial numbers, item codes, decorators
+        material_text = re.sub(r"^(?:[A-Za-z_]+\s*[\|_\-]+\s*)?", "", material_text)  # Remove text prefix like "to |", "is _|"
+        material_text = re.sub(r"^[\[\(\{\|_\-]*\s*\d{1,4}[\.)\]|_:\-]*\s*", "", material_text)  # Remove serial
+        material_text = re.sub(r"^\d{6,8}\s+", "", material_text)  # Remove item code at start
+        material_text = re.sub(r"\b\d{6,8}\b", " ", material_text)  # Remove embedded item codes
+        material_text = re.sub(r"\b\d+\.\d{2}\b", " ", material_text)  # Remove prices like "200.00"
+        material_text = re.sub(r"^[\[\(\{]+", "", material_text)  # Remove leading brackets
+        material_text = re.sub(r"_UB_[^\ ]+", "", material_text)  # Remove _UB_1X1KG or _UB_1xIKG patterns
+        material_text = re.sub(r"\s+", " ", material_text).strip()
+        
+        if material_text:
+            return material_text, f"{qty_value} {unit_value}"
+
     # Handle "material UOM quantity" format (UOM before quantity)
     # Example: "4 ONION BIG_UB_1X1KG KG 45 25.07.2026" or "2_|POTATO LARGE_UB_1X1KG KG 20"
-    # Make space after serial decorations optional to handle "2_|POTATO" (no space after |)
-    # Remove \b word boundary to handle "30__" (underscore after number)
+    # Also handle text prefixes: "to | 206589 [GREEN CHILLY_UB_1X1KG KG 5.00"
     uom_before_qty_match = re.search(
-        r"^\s*[\[\(\{\|_\-]*\s*\d{1,4}[\.)\]|_:\-]*\s*(.+?)\s+(KG|KGS|NOS|EA)\.?\s+(\d+(?:\.\d+)?)",
+        r"^\s*(?:[A-Za-z_]+\s*[\|_\-]+\s*)?[\[\(\{\|_\-]*\s*\d{1,6}[\.)\]|_:\-]*\s*(.+?)\s+(KG|KGS|NOS|EA)\.?\s+(\d+(?:\.\d+)?)",
         compact,
         flags=re.IGNORECASE,
     )
@@ -104,14 +140,21 @@ def extract_row_fields(text):
         material = uom_before_qty_match.group(1).strip()
         unit = uom_before_qty_match.group(2).upper()
         qty = normalize_quantity_number(uom_before_qty_match.group(3))
+        
+        # Clean up material: remove decorators and packaging patterns
+        material = re.sub(r"^[\[\(\{]+", "", material)  # Remove leading brackets
+        material = re.sub(r"_UB_[^\s]+", "", material)  # Remove _UB_1X1KG or _UB_1xIKG patterns
+        material = re.sub(r"\s+", " ", material).strip()
+        
         if unit in ["KG", "KGS"]:
             unit = "KG"
         return material, f"{qty} {unit}"
     
     # Handle OCR errors in UOM (Ko, Ke, Kq → KG) and quantity after pipe
     # Example: "206569 |[CABBAGE_UB_1X1KG Ko | 150" or "206607 |ONION BIG_UB_1X1KG Ke | 250"
+    # Also handle text prefixes: "ai_| 206392 [GARLIC DRY_UB_1xIKG KG 3.00"
     uom_typo_match = re.search(
-        r"^\s*[\[\(\{\|_\-]*\s*\d{1,6}[\.)\]|_:\-]*\s*(.+?)\s+(?:K[oegq]|KGS|NOS|EA)\.?\s*[\|\]]*\s*(\d+(?:\.\d+)?)",
+        r"^\s*(?:[A-Za-z_]+\s*[\|_\-]+\s*)?[\[\(\{\|_\-]*\s*\d{1,6}[\.)\]|_:\-]*\s*(.+?)\s+(?:K[oegq]|KGS|NOS|EA)\.?\s*[\|\]]*\s*(\d+(?:\.\d+)?)",
         compact,
         flags=re.IGNORECASE,
     )
@@ -123,8 +166,9 @@ def extract_row_fields(text):
     
     # Handle UOM with decorations embedded in material name
     # Example: "206578 [COCONUT FRESH_UB_1X1NOS|_EA 300" or "206579 [CORIANDER LEAVES_UB_1X1K|_KG 8"
+    # Also handle text prefixes: "is_| 206580 [CUCUMBER HYBRID_UB_1X1KG KG 3.00"
     uom_decorated_match = re.search(
-        r"^\s*[\[\(\{\|_\-]*\s*\d{1,6}[\.)\]|_:\-]*\s*(.+?)[\|\]_\-]+(?:KG|KGS|NOS|EA)\s+(\d+(?:\.\d+)?)",
+        r"^\s*(?:[A-Za-z_]+\s*[\|_\-]+\s*)?[\[\(\{\|_\-]*\s*\d{1,6}[\.)\]|_:\-]*\s*(.+?)[\|\]_\-]+(?:KG|KGS|NOS|EA)\s+(\d+(?:\.\d+)?)",
         compact,
         flags=re.IGNORECASE,
     )
@@ -136,8 +180,9 @@ def extract_row_fields(text):
             return material, f"{qty} EA"
         return material, f"{qty} KG"
 
+    # Handle HSN code format with optional text prefix
     hsn_then_uom_match = re.search(
-        r"^\s*\d{1,4}\s+\d{6,7}\s+(.+?)\s+\d{6,8}(?:_[A-Z])?\s+(KG|KGS|NOS|EA)\s+(\d+(?:\.\d+)?)\b",
+        r"^\s*(?:[A-Za-z_]+\s*[\|_\-]+\s*)?\d{1,4}\s+\d{6,7}\s+(.+?)\s+\d{6,8}(?:_[A-Z])?\s+(KG|KGS|NOS|EA)\s+(\d+(?:\.\d+)?)\b",
         compact,
         flags=re.IGNORECASE,
     )
@@ -149,8 +194,9 @@ def extract_row_fields(text):
             unit = "KG"
         return material, f"{qty} {unit}"
 
+    # Handle PO format with optional text prefix
     po_match = re.search(
-        r"^\s*\d+\s+\d{6,7}\s+(.+?)\s+(\d+(?:\.\d+)?)\s*(KG|KGS|NOS|EA)\b",
+        r"^\s*(?:[A-Za-z_]+\s*[\|_\-]+\s*)?\d+\s+\d{6,7}\s+(.+?)\s+(\d+(?:\.\d+)?)\s*(KG|KGS|NOS|EA)\b",
         compact,
         flags=re.IGNORECASE,
     )
@@ -165,8 +211,9 @@ def extract_row_fields(text):
     # Some PDFs render rows without item-code as:
     # "15 GINGER FRESH 1.5 Kgs 43.00 64.50".
     # Parse qty-before-unit first so rate is not treated as quantity.
+    # Handle optional text prefix
     table_qty_unit_match = re.search(
-        r"^\s*[\[\(\{\|_\-]*\s*\d{1,4}[\.)\]|_:\-]*\s+(?:\d+\s+)?(.+?)\s+(\d+(?:\.\d+)?)\s*(KG|KGS|NOS|EA)\b",
+        r"^\s*(?:[A-Za-z_]+\s*[\|_\-]+\s*)?[\[\(\{\|_\-]*\s*\d{1,4}[\.)\]|_:\-]*\s+(?:\d+\s+)?(.+?)\s+(\d+(?:\.\d+)?)\s*(KG|KGS|NOS|EA)\b",
         compact,
         flags=re.IGNORECASE,
     )
@@ -178,8 +225,9 @@ def extract_row_fields(text):
             unit = "KG"
         return material, f"{qty} {unit}"
 
+    # Handle table format with optional text prefix
     table_match = re.search(
-        r"^\s*[\[\(\{\|_\-]*\s*\d{1,4}[\.)\]|_:\-]*\s+(?:\d+\s+)?(.+?)\s+(KG|KGS|NOS|EA)\.?\s+(\d+(?:\.\d+)?)\b",
+        r"^\s*(?:[A-Za-z_]+\s*[\|_\-]+\s*)?[\[\(\{\|_\-]*\s*\d{1,4}[\.)\]|_:\-]*\s+(?:\d+\s+)?(.+?)\s+(KG|KGS|NOS|EA)\.?\s+(\d+(?:\.\d+)?)\b",
         compact,
         flags=re.IGNORECASE,
     )
@@ -224,7 +272,8 @@ def build_row_candidates(lines, noise_line_patterns):
     row_candidates = []
     current_row = ""
     # Make trailing space optional (\s*) to handle formats like "2_|POTATO" (no space after |)
-    serial_row_pattern = r"^\s*[\[\(\{\|_\-]*\s*\d{1,4}[\.)\]|_:\-]*\s*"
+    # Also handle text prefixes like "io |", "ti_|", "is _|" before serial numbers
+    serial_row_pattern = r"^\s*(?:[A-Za-z_]+\s*[\|_\-]+\s*)?[\[\(\{\|_\-]*\s*\d{1,4}[\.)\]|_:\-]*\s*"
     quantity_fragment_pattern = r"^\d+(?:\.\d+)?\s*(?:KG|KGS|NOS|EA)\b"
     unit_first_fragment_pattern = r"^(?:KG|KGS|NOS|EA)\b\s*\d"
     amount_fragment_pattern = r"^\d{1,3}(?:,\d{3})*(?:\.\d+)?$"

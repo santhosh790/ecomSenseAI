@@ -1,16 +1,13 @@
 {
-    "RASSENSE PVT LTD": "RASSENSE",
-    "MRF": "MRF",
-    "LT-TPI": "TPI",
-    "LT-CST": "CST",
-    "LT-RPM": "RPM",
-    "LT-VALVES": "VALVES",
-    "VIT-H&J": "H&J",
-    "FUSION FOOD PVT LTD": "FUSION",
-    "VIT-Q&R": "Q&R",
-    "BLUSPRING PVT LTD": "BLUSPRING",
-    "CMC-VLR": "CVLR",
-    "CMC-RPT": "CRPT",
-    "VIT-S BLOCK": "VIT-S",
-    "KOSTAL": "KOSTAL"
+    "RPL-MRF": "MRF",
+    "RPL-LT-TPI": "TPI",
+    "RPL-LT-CST": "CST",
+    "RPL-LT-RPM": "RPM",
+    "RPL-LT-VALVES": "VALVES",
+    "RPL-VIT-H&J": "H&J",
+    "FFPL-VIT-Q&R": "FFPL",
+    "BSPL-CMC-VLR": "CVLR",
+    "BSPL-CMC-RPT": "CRPT",
+    "BSPL-VIT-S BLOCK": "VIT-S",
+    "BSPL-KOSTAL": "KOSTAL"
 }
