@@ -420,13 +420,13 @@ def export_pdf(
 <style>
   @font-face {{
     font-family: 'TamilFont';
-        src: local('Noto Sans Tamil'), local('Lohit Tamil'), local('Tamil Sangam MN'), local('Tamil MN');
+        src: local('Azhagi'), local('AzhagiFont'), local('Noto Sans Tamil'), local('Lohit Tamil'), local('Tamil Sangam MN'), local('Tamil MN');
   }}
   @page {{
-    margin: 15mm;
+    margin: 10mm 12mm;
   }}
   body {{
-        font-family: 'Noto Sans Tamil', 'Lohit Tamil', 'Tamil Sangam MN', 'Tamil MN', serif;
+        font-family: 'Azhagi', 'AzhagiFont', 'Noto Sans Tamil', 'Lohit Tamil', 'Tamil Sangam MN', 'Tamil MN', serif;
     margin: 0;
     padding: 0;
     color: #111;
@@ -434,19 +434,19 @@ def export_pdf(
   .header-section {{
     display: flex;
     align-items: center;
-    margin-bottom: 10px;
-    padding-bottom: 8px;
+    justify-content: space-between;
+    margin-bottom: 6px;
+    padding-bottom: 5px;
     border-bottom: 2px solid #2c3e50;
   }}
   .header-left {{
     display: flex;
     align-items: center;
-    flex: 1;
   }}
   .brand-logo {{
-    height: 50px;
+    height: 45px;
     width: auto;
-    margin-right: 15px;
+    margin-right: 12px;
   }}
   .header-text {{
     flex: 1;
@@ -462,27 +462,32 @@ def export_pdf(
     color: #555;
     margin: 2px 0 0 0;
   }}
-  .date-line {{
-    font-size: 12px;
+  .header-right {{
+    text-align: right;
+    font-size: 14px;
     color: #444;
-    margin-bottom: 8px;
+    line-height: 1.4;
+  }}
+  .header-right div {{
+    margin: 2px 0;
   }}
   table {{
     width: 100%;
     border-collapse: collapse;
+    margin-top: 4px;
   }}
   thead tr {{
     background: #2c3e50;
     color: #fff;
   }}
   th {{
-    padding: 6px 10px;
+    padding: 4px 8px;
     font-size: 15px;
     text-align: left;
   }}
   th.num {{ text-align: right; }}
   td {{
-    padding: 5px 10px;
+    padding: 3px 8px;
     font-size: 18px;
     border-bottom: 1px solid #ddd;
   }}
@@ -490,12 +495,12 @@ def export_pdf(
   tfoot td {{
     font-weight: bold;
     border-top: 2px solid #2c3e50;
-    padding: 6px 10px;
+    padding: 4px 8px;
     font-size: 11px;
   }}
     .footer-note {{
-        margin-top: 14px;
-        font-size: 12px;
+        margin-top: 8px;
+        font-size: 11px;
         color: #222;
         font-weight: 600;
     }}
@@ -510,8 +515,11 @@ def export_pdf(
                 <div class=\"subtitle\">காய்கறி பட்டியல்</div>
             </div>
         </div>
+        <div class=\"header-right\">
+            {'<div><b>வாடிக்கையாளர்:</b> ' + client_text + '</div>' if client_text else ''}
+            <div><b>தேதி:</b> {date_str}</div>
+        </div>
     </div>
-    <div class=\"date-line\">{'வாடிக்கையாளர்: ' + client_text + '  |  ' if client_text else ''}{str(above_list_text or '')}{'  |  ' if str(above_list_text or '').strip() else ''}தேதி: {date_str}</div>
   <table>
     <thead>
       <tr>
@@ -991,7 +999,7 @@ def export_delivery_challan_pdf(
             margin: 15mm;
         }}
         body {{
-            font-family: "Noto Sans Tamil", "Lohit Tamil", Arial, sans-serif;
+            font-family: "Azhagi", "AzhagiFont", "Noto Sans Tamil", "Lohit Tamil", Arial, sans-serif;
             font-size: 10pt;
             line-height: 1.4;
             color: #000;
