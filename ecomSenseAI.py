@@ -354,15 +354,82 @@ def detect_vegetables(text, return_details=False, parser_selection=None):
     )
 
 
+def inject_mobile_first_styles():
+    """Inject responsive styles for mobile-first Streamlit usage."""
+    st.markdown(
+        """
+        <style>
+        .stApp {
+            -webkit-text-size-adjust: 100%;
+        }
+
+        .main .block-container {
+            padding-top: 0.8rem;
+            padding-bottom: 1rem;
+        }
+
+        /* Larger tap targets for mobile */
+        div.stButton > button,
+        div.stDownloadButton > button {
+            min-height: 44px;
+            border-radius: 10px;
+            font-weight: 600;
+        }
+
+        /* Improve readability in tables on smaller screens */
+        .stDataFrame,
+        .stTable {
+            font-size: 0.95rem;
+        }
+
+        @media (max-width: 768px) {
+            .main .block-container {
+                padding-left: 0.8rem;
+                padding-right: 0.8rem;
+            }
+
+            div.stButton > button,
+            div.stDownloadButton > button {
+                width: 100%;
+            }
+
+            h1 {
+                font-size: 1.6rem !important;
+            }
+
+            h2, h3 {
+                font-size: 1.2rem !important;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 # ============================================================
 # STREAMLIT UI
 # ============================================================
+
+
+inject_mobile_first_styles()
 
 
 st.title("🛒 ecomSense AI")
 st.subheader(
     "Multilingual Grocery Document Extractor"
 )
+
+with st.expander("📱 Install On Mobile (PWA-Style)", expanded=False):
+    st.markdown(
+        """
+        **Android (Chrome):** Open app URL -> Tap menu (⋮) -> **Add to Home screen**
+
+        **iPhone (Safari):** Open app URL -> Tap Share -> **Add to Home Screen**
+
+        **Note:** This mode reuses your current Streamlit backend with zero extra server cost.
+        """
+    )
 
 st.session_state["print_logo_data_uri"] = get_default_logo_data_uri()
 
