@@ -1,6 +1,5 @@
 {
   "vegetable_tamil_map": {
-    "AMLA": "நெல்லிக்காய் (AMLA)",
     "APPLE": "ஆப்பிள் (APPLE)",
     "APPLE GREEN": "பச்சை ஆப்பிள் (APPLE GREEN)",
     "BEANS FRENCH": "பிரெஞ்சு பீன்ஸ் (BEANS FRENCH)",
@@ -49,7 +48,7 @@
     "BANANA": "வாழைப்பழம் (BANANA)",
     "BASIL": "துளசி (BASIL)",
     "BEANS CLUSTER": "கொத்தவரை (BEANS CLUSTER)",
-    "BEANS": "பீன்ஸ் (BEANS)",
+    "BEANS": "பீன்ஸ் வெள்ளை (BEANS)",
     "BEANS GREEN": "பீன்ஸ் பச்சை (BEANS GREEN)",
     "BEANS WHITE": "பீன்ஸ் வெள்ளை (BEANS WHITE)",
     "BEETROOT": "பீட்ரூட் (BEETROOT)",
@@ -221,7 +220,7 @@
     "POTATO": "உருளை (POTATO)",
     "POTATO CHIPS": "சிப்ஸ் உருளை (POTATO CHIPS)",
     "POTATO SMALL": "பேபி உருளை (POTATO SMALL)",
-    "PUMPKIN": "பூசணி (PUMPKIN)",
+    "PUMPKIN": "மஞ்சள் பூசணி (PUMPKIN)",
     "PUMPKIN RED": "மஞ்சள் பூசணி (PUMPKIN RED)",
     "PUMPKIN WHITE": "வெள்ளை பூசணி (PUMPKIN WHITE)",
     "PUMPKIN WHITE HALWA": "வெள்ளை பூசணி அல்வா (PUMPKIN WHITE HALWA)",
