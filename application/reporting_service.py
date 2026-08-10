@@ -175,7 +175,12 @@ def consolidate_with_client_columns(df):
     # Note: Date column is NOT added back to result since it's shown in the report header
     # The date_value is only used for extracting the date for the header in export functions
 
-    return pivot_df[result_cols]
+    result_df = pivot_df[result_cols]
+    
+    # Sort consolidated report alphabetically: vegetables first, then fruits
+    result_df = _sort_items_by_category(result_df, name_column='Tamil Name')
+    
+    return result_df
 
 
 def _categorize_item(name):
@@ -479,6 +484,9 @@ def export_pdf(
   thead tr {{
     background: #2c3e50;
     color: #fff;
+  }}
+  tbody tr {{
+    page-break-inside: avoid;
   }}
   th {{
     padding: 4px 8px;
