@@ -413,6 +413,9 @@ def export_pdf(
         )
 
     client_header_html = "".join([f'<th class="num">{col}</th>' for col in client_cols])
+    footer_summary = f"மொத்தம் {len(df)} பொருட்கள்"
+    if client_text:
+        footer_summary = f"{footer_summary} | வாடிக்கையாளர்: {client_text}"
 
     logo_html = ""
     if logo_data_uri:
@@ -481,7 +484,13 @@ def export_pdf(
     border-collapse: collapse;
     margin-top: 4px;
   }}
-  thead tr {{
+    thead {{
+        display: table-header-group;
+    }}
+    tfoot {{
+        display: table-footer-group;
+    }}
+    thead tr {{
     background: #2c3e50;
     color: #fff;
   }}
@@ -543,7 +552,7 @@ def export_pdf(
     </tbody>
     <tfoot>
       <tr>
-                <td colspan=\"2\">மொத்தம் {len(df)} பொருட்கள்</td>
+                                <td colspan=\"5\">{footer_summary}</td>
                 <td class=\"num\" colspan=\"{len(client_cols) + 2}\"></td>
       </tr>
     </tfoot>
