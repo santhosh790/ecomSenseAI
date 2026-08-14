@@ -102,6 +102,28 @@ class ExtractionServiceTests(unittest.TestCase):
         self.assertIn("Potato", names)
         self.assertIn("Curry Leaves", names)
 
+    def test_detect_vegetables_handles_alphanumeric_ocr_row_prefix(self):
+        text = "\n".join(
+            [
+                "13 | 206392 _[GARLICDRY_UB_1X1KG kG 2.00] 15.08.2026",
+                "i4_| 206583 _ [CURRY LEAVES _UB_1XIKG ke 0.50] 15.08.2026",
+                "15 _|_20654_[DRUMSTICK_UB_1X1KG ke 2.00] 15.08.2026",
+            ]
+        )
+
+        items, report = detect_vegetables(
+            text,
+            vegetable_aliases=VEGETABLE_ALIASES,
+            vegetable_tamil_map=VEGETABLE_TAMIL_MAP,
+            noise_line_patterns=NOISE_LINE_PATTERNS,
+            return_details=True,
+            confidence_threshold=70,
+        )
+
+        names = {row["Source Name"] for row in items}
+        self.assertIn("Curry Leaves", names)
+        self.assertEqual(report["candidate_lines"], 3)
+
     def test_apply_confidence_policy_marks_review(self):
         items = [
             {

@@ -116,7 +116,7 @@ def extract_row_fields(text):
         material_text = compact[:material_end].strip()
         
         # Clean up material: remove serial numbers, item codes, decorators
-        material_text = re.sub(r"^(?:[A-Za-z_]+\s*[\|_\-]+\s*)?", "", material_text)  # Remove text prefix like "to |", "is _|"
+        material_text = re.sub(r"^(?:[A-Za-z0-9_]+\s*[\|_\-]+\s*)?", "", material_text)  # Remove OCR prefix like "to |", "is _|", "i4_|"
         material_text = re.sub(r"^[\[\(\{\|_\-]*\s*\d{1,4}[\.)\]|_:\-]*\s*", "", material_text)  # Remove serial
         material_text = re.sub(r"^\d{6,8}\s+", "", material_text)  # Remove item code at start
         material_text = re.sub(r"\b\d{6,8}\b", " ", material_text)  # Remove embedded item codes
@@ -132,7 +132,7 @@ def extract_row_fields(text):
     # Example: "4 ONION BIG_UB_1X1KG KG 45 25.07.2026" or "2_|POTATO LARGE_UB_1X1KG KG 20"
     # Also handle text prefixes: "to | 206589 [GREEN CHILLY_UB_1X1KG KG 5.00"
     uom_before_qty_match = re.search(
-        r"^\s*(?:[A-Za-z_]+\s*[\|_\-]+\s*)?[\[\(\{\|_\-]*\s*\d{1,6}[\.)\]|_:\-]*\s*(.+?)\s+(KG|KGS|NOS|EA)\.?\s+(\d+(?:\.\d+)?)",
+        r"^\s*(?:[A-Za-z0-9_]+\s*[\|_\-]+\s*)?[\[\(\{\|_\-]*\s*\d{1,6}[\.)\]|_:\-]*\s*(.+?)\s+(KG|KGS|NOS|EA)\.?\s+(\d+(?:\.\d+)?)",
         compact,
         flags=re.IGNORECASE,
     )
@@ -154,7 +154,7 @@ def extract_row_fields(text):
     # Example: "206569 |[CABBAGE_UB_1X1KG Ko | 150" or "206607 |ONION BIG_UB_1X1KG Ke | 250"
     # Also handle text prefixes: "ai_| 206392 [GARLIC DRY_UB_1xIKG KG 3.00"
     uom_typo_match = re.search(
-        r"^\s*(?:[A-Za-z_]+\s*[\|_\-]+\s*)?[\[\(\{\|_\-]*\s*\d{1,6}[\.)\]|_:\-]*\s*(.+?)\s+(?:K[oegq]|KGS|NOS|EA)\.?\s*[\|\]]*\s*(\d+(?:\.\d+)?)",
+        r"^\s*(?:[A-Za-z0-9_]+\s*[\|_\-]+\s*)?[\[\(\{\|_\-]*\s*\d{1,6}[\.)\]|_:\-]*\s*(.+?)\s+(?:K[oegq]|KGS|NOS|EA)\.?\s*[\|\]]*\s*(\d+(?:\.\d+)?)",
         compact,
         flags=re.IGNORECASE,
     )
@@ -168,7 +168,7 @@ def extract_row_fields(text):
     # Example: "206578 [COCONUT FRESH_UB_1X1NOS|_EA 300" or "206579 [CORIANDER LEAVES_UB_1X1K|_KG 8"
     # Also handle text prefixes: "is_| 206580 [CUCUMBER HYBRID_UB_1X1KG KG 3.00"
     uom_decorated_match = re.search(
-        r"^\s*(?:[A-Za-z_]+\s*[\|_\-]+\s*)?[\[\(\{\|_\-]*\s*\d{1,6}[\.)\]|_:\-]*\s*(.+?)[\|\]_\-]+(?:KG|KGS|NOS|EA)\s+(\d+(?:\.\d+)?)",
+        r"^\s*(?:[A-Za-z0-9_]+\s*[\|_\-]+\s*)?[\[\(\{\|_\-]*\s*\d{1,6}[\.)\]|_:\-]*\s*(.+?)[\|\]_\-]+(?:KG|KGS|NOS|EA)\s+(\d+(?:\.\d+)?)",
         compact,
         flags=re.IGNORECASE,
     )
@@ -182,7 +182,7 @@ def extract_row_fields(text):
 
     # Handle HSN code format with optional text prefix
     hsn_then_uom_match = re.search(
-        r"^\s*(?:[A-Za-z_]+\s*[\|_\-]+\s*)?\d{1,4}\s+\d{6,7}\s+(.+?)\s+\d{6,8}(?:_[A-Z])?\s+(KG|KGS|NOS|EA)\s+(\d+(?:\.\d+)?)\b",
+        r"^\s*(?:[A-Za-z0-9_]+\s*[\|_\-]+\s*)?\d{1,4}\s+\d{6,7}\s+(.+?)\s+\d{6,8}(?:_[A-Z])?\s+(KG|KGS|NOS|EA)\s+(\d+(?:\.\d+)?)\b",
         compact,
         flags=re.IGNORECASE,
     )
@@ -196,7 +196,7 @@ def extract_row_fields(text):
 
     # Handle PO format with optional text prefix
     po_match = re.search(
-        r"^\s*(?:[A-Za-z_]+\s*[\|_\-]+\s*)?\d+\s+\d{6,7}\s+(.+?)\s+(\d+(?:\.\d+)?)\s*(KG|KGS|NOS|EA)\b",
+        r"^\s*(?:[A-Za-z0-9_]+\s*[\|_\-]+\s*)?\d+\s+\d{6,7}\s+(.+?)\s+(\d+(?:\.\d+)?)\s*(KG|KGS|NOS|EA)\b",
         compact,
         flags=re.IGNORECASE,
     )
@@ -213,7 +213,7 @@ def extract_row_fields(text):
     # Parse qty-before-unit first so rate is not treated as quantity.
     # Handle optional text prefix
     table_qty_unit_match = re.search(
-        r"^\s*(?:[A-Za-z_]+\s*[\|_\-]+\s*)?[\[\(\{\|_\-]*\s*\d{1,4}[\.)\]|_:\-]*\s+(?:\d+\s+)?(.+?)\s+(\d+(?:\.\d+)?)\s*(KG|KGS|NOS|EA)\b",
+        r"^\s*(?:[A-Za-z0-9_]+\s*[\|_\-]+\s*)?[\[\(\{\|_\-]*\s*\d{1,4}[\.)\]|_:\-]*\s+(?:\d+\s+)?(.+?)\s+(\d+(?:\.\d+)?)\s*(KG|KGS|NOS|EA)\b",
         compact,
         flags=re.IGNORECASE,
     )
@@ -227,7 +227,7 @@ def extract_row_fields(text):
 
     # Handle table format with optional text prefix
     table_match = re.search(
-        r"^\s*(?:[A-Za-z_]+\s*[\|_\-]+\s*)?[\[\(\{\|_\-]*\s*\d{1,4}[\.)\]|_:\-]*\s+(?:\d+\s+)?(.+?)\s+(KG|KGS|NOS|EA)\.?\s+(\d+(?:\.\d+)?)\b",
+        r"^\s*(?:[A-Za-z0-9_]+\s*[\|_\-]+\s*)?[\[\(\{\|_\-]*\s*\d{1,4}[\.)\]|_:\-]*\s+(?:\d+\s+)?(.+?)\s+(KG|KGS|NOS|EA)\.?\s+(\d+(?:\.\d+)?)\b",
         compact,
         flags=re.IGNORECASE,
     )
@@ -273,7 +273,7 @@ def build_row_candidates(lines, noise_line_patterns):
     current_row = ""
     # Make trailing space optional (\s*) to handle formats like "2_|POTATO" (no space after |)
     # Also handle text prefixes like "io |", "ti_|", "is _|" before serial numbers
-    serial_row_pattern = r"^\s*(?:[A-Za-z_]+\s*[\|_\-]+\s*)?[\[\(\{\|_\-]*\s*\d{1,4}[\.)\]|_:\-]*\s*"
+    serial_row_pattern = r"^\s*(?:[A-Za-z0-9_]+\s*[\|_\-]+\s*)?[\[\(\{\|_\-]*\s*\d{1,4}[\.)\]|_:\-]*\s*"
     quantity_fragment_pattern = r"^\d+(?:\.\d+)?\s*(?:KG|KGS|NOS|EA)\b"
     unit_first_fragment_pattern = r"^(?:KG|KGS|NOS|EA)\b\s*\d"
     amount_fragment_pattern = r"^\d{1,3}(?:,\d{3})*(?:\.\d+)?$"
