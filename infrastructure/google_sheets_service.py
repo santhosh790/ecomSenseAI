@@ -1,12 +1,58 @@
 from datetime import date
 
 
+def _build_google_sheets_client(secrets, gspread_module, credentials_cls):
+    if gspread_module is None or credentials_cls is None:
+        return None, None, "Google Sheets libraries are not installed. Add gspread and google-auth dependencies."
+
+    sheet_cfg = secrets.get("google_sheet", {})
+    spreadsheet_id = sheet_cfg.get("spreadsheet_id", secrets.get("GOOGLE_SHEET_ID", ""))
+    worksheet_name = sheet_cfg.get("worksheet", secrets.get("GOOGLE_SHEET_WORKSHEET", "Sheet1"))
+    creds_info = secrets.get("gcp_service_account", sheet_cfg.get("service_account", None))
+
+    if not spreadsheet_id:
+        return None, None, "Google Sheet ID is missing. Configure it in Streamlit secrets."
+
+    if not creds_info:
+        return None, None, "Service account credentials are missing. Configure gcp_service_account in Streamlit secrets."
+
+    try:
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        creds = credentials_cls.from_service_account_info(dict(creds_info), scopes=scopes)
+        client = gspread_module.authorize(creds)
+        spreadsheet = client.open_by_key(spreadsheet_id)
+
+        try:
+            worksheet = spreadsheet.worksheet(worksheet_name)
+        except gspread_module.WorksheetNotFound:
+            worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows=1000, cols=20)
+
+        return worksheet, worksheet_name, ""
+    except Exception as err:
+        return None, None, f"Google Sheet connection failed: {err}"
+
+
+def _serialize_rows_for_headers(rows, headers):
+    serialized = []
+    for row in rows:
+        row_values = []
+        for header in headers:
+            row_values.append(str(row.get(header, "")))
+        serialized.append(row_values)
+    return serialized
+
+
 def push_validated_items_to_google_sheet(
     df,
     secrets,
     gspread_module,
     credentials_cls,
     target_date=None,
+    source_file="",
+    replace_existing=False,
 ):
     """
     Push validated items to Google Sheets with Order column to preserve extraction sequence.
@@ -17,40 +63,21 @@ def push_validated_items_to_google_sheet(
     if df is None or len(df) == 0:
         return False, "No validated rows to push."
 
-    if gspread_module is None or credentials_cls is None:
-        return False, "Google Sheets libraries are not installed. Add gspread and google-auth dependencies."
-
-    sheet_cfg = secrets.get("google_sheet", {})
-    spreadsheet_id = sheet_cfg.get("spreadsheet_id", secrets.get("GOOGLE_SHEET_ID", ""))
-    worksheet_name = sheet_cfg.get("worksheet", secrets.get("GOOGLE_SHEET_WORKSHEET", "Sheet1"))
-    creds_info = secrets.get("gcp_service_account", sheet_cfg.get("service_account", None))
-
-    if not spreadsheet_id:
-        return False, "Google Sheet ID is missing. Configure it in Streamlit secrets."
-
-    if not creds_info:
-        return False, "Service account credentials are missing. Configure gcp_service_account in Streamlit secrets."
+    worksheet, worksheet_name, conn_err = _build_google_sheets_client(
+        secrets,
+        gspread_module,
+        credentials_cls,
+    )
+    if worksheet is None:
+        return False, conn_err
 
     try:
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive",
-        ]
-
-        creds = credentials_cls.from_service_account_info(dict(creds_info), scopes=scopes)
-        client = gspread_module.authorize(creds)
-        spreadsheet = client.open_by_key(spreadsheet_id)
-
-        try:
-            worksheet = spreadsheet.worksheet(worksheet_name)
-        except gspread_module.WorksheetNotFound:
-            worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows=1000, cols=20)
-
         push_df = df.copy()
         # Add Order column (1-based sequence) as first column
         push_df.insert(0, "Order", range(1, len(push_df) + 1))
         # Add Date column (use target_date if provided, otherwise today)
         push_df["Date"] = target_date if target_date else date.today().isoformat()
+        push_df["Source File"] = str(source_file or "")
         push_df = push_df.fillna("")
         
         # Reorder columns to put Order and Date first
@@ -58,7 +85,8 @@ def push_validated_items_to_google_sheet(
         # Move Order to first, Date to second
         cols.remove("Order")
         cols.remove("Date")
-        push_df = push_df[["Order", "Date"] + cols]
+        cols.remove("Source File")
+        push_df = push_df[["Order", "Date", "Source File"] + cols]
 
         headers = [str(col) for col in push_df.columns]
         values = push_df.astype(str).values.tolist()
@@ -66,12 +94,130 @@ def push_validated_items_to_google_sheet(
         existing_header = worksheet.row_values(1)
         if not existing_header:
             worksheet.append_row(headers, value_input_option="USER_ENTERED")
+            existing_header = headers.copy()
 
-        worksheet.append_rows(values, value_input_option="USER_ENTERED")
+        if not replace_existing:
+            worksheet.append_rows(values, value_input_option="USER_ENTERED")
+            return True, f"Pushed {len(values)} row(s) to Google Sheet ({worksheet_name})."
 
-        return True, f"Pushed {len(values)} row(s) to Google Sheet."
+        all_values = worksheet.get_all_values()
+        existing_rows = []
+        for raw_row in all_values[1:]:
+            row_map = {}
+            for idx, col_name in enumerate(existing_header):
+                row_map[col_name] = raw_row[idx] if idx < len(raw_row) else ""
+            existing_rows.append(row_map)
+
+        target_date_str = target_date if target_date else date.today().isoformat()
+        source_file_str = str(source_file or "")
+
+        filtered_rows = []
+        removed_count = 0
+        for row in existing_rows:
+            if row.get("Date", "").strip() == target_date_str and row.get("Source File", "").strip() == source_file_str:
+                removed_count += 1
+                continue
+            filtered_rows.append(row)
+
+        incoming_rows = []
+        for row_values in values:
+            row_map = {}
+            for idx, col_name in enumerate(headers):
+                row_map[col_name] = row_values[idx] if idx < len(row_values) else ""
+            incoming_rows.append(row_map)
+
+        final_headers = list(existing_header)
+        if "Date" not in final_headers:
+            final_headers.append("Date")
+        if "Source File" not in final_headers:
+            final_headers.append("Source File")
+        for col in headers:
+            if col not in final_headers:
+                final_headers.append(col)
+
+        merged_rows = filtered_rows + incoming_rows
+        body = _serialize_rows_for_headers(merged_rows, final_headers)
+
+        worksheet.clear()
+        worksheet.update("A1", [final_headers], value_input_option="USER_ENTERED")
+        if body:
+            worksheet.update("A2", body, value_input_option="USER_ENTERED")
+
+        return True, (
+            f"Synced {len(values)} row(s) to Google Sheet ({worksheet_name}) "
+            f"for source '{source_file_str}' on {target_date_str} "
+            f"(replaced {removed_count} row(s))."
+        )
     except Exception as err:
         return False, f"Google Sheet push failed: {err}"
+
+
+def remove_validated_items_from_google_sheet(
+    target_date,
+    source_file,
+    secrets,
+    gspread_module,
+    credentials_cls,
+):
+    worksheet, worksheet_name, conn_err = _build_google_sheets_client(
+        secrets,
+        gspread_module,
+        credentials_cls,
+    )
+    if worksheet is None:
+        return False, conn_err
+
+    try:
+        header = worksheet.row_values(1)
+        if not header:
+            return True, "Google Sheet is empty. Nothing to remove."
+
+        if "Date" not in header or "Source File" not in header:
+            return False, (
+                "Sheet removal needs 'Date' and 'Source File' columns in row 1. "
+                "Cannot safely remove upload-specific rows without them."
+            )
+
+        all_values = worksheet.get_all_values()
+        existing_rows = []
+        for raw_row in all_values[1:]:
+            row_map = {}
+            for idx, col_name in enumerate(header):
+                row_map[col_name] = raw_row[idx] if idx < len(raw_row) else ""
+            existing_rows.append(row_map)
+
+        kept_rows = []
+        removed_count = 0
+        target_date_str = str(target_date or "").strip()
+        source_file_str = str(source_file or "").strip()
+
+        for row in existing_rows:
+            if row.get("Date", "").strip() == target_date_str and row.get("Source File", "").strip() == source_file_str:
+                removed_count += 1
+                continue
+            kept_rows.append(row)
+
+        if removed_count == 0:
+            return True, (
+                f"No Google Sheet rows found for source '{source_file_str}' on {target_date_str}."
+            )
+
+        worksheet.clear()
+        worksheet.update("A1", [header], value_input_option="USER_ENTERED")
+
+        if kept_rows:
+            worksheet.update(
+                "A2",
+                _serialize_rows_for_headers(kept_rows, header),
+                value_input_option="USER_ENTERED",
+            )
+
+        return True, (
+            f"Removed {removed_count} Google Sheet row(s) "
+            f"for source '{source_file_str}' on {target_date_str} from {worksheet_name}."
+        )
+    except Exception as err:
+        return False, f"Google Sheet removal failed: {err}"
 
 
 def push_consolidated_to_google_sheet(

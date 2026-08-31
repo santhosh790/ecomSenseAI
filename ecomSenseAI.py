@@ -27,7 +27,11 @@ try:
         read_image,
         read_pdf,
     )
-    from infrastructure.google_sheets_service import push_validated_items_to_google_sheet, push_consolidated_to_google_sheet
+    from infrastructure.google_sheets_service import (
+        push_validated_items_to_google_sheet,
+        push_consolidated_to_google_sheet,
+        remove_validated_items_from_google_sheet,
+    )
     from infrastructure.ocr_engine import extract_image_text as extract_image_text_service
     from infrastructure.ocr_engine import load_ocr_model
     from infrastructure.address_service import (
@@ -816,6 +820,7 @@ with tab_primary:
             "Also push confirmed rows to Google Sheet",
             key="push_gsheet_on_confirm",
             help="CSV save is always done. Enable this only when Sheet secrets are configured. Adds Order and Date columns to preserve extraction sequence.",
+            value=True,
         )
 
         if st.button("✅ Confirm"):
@@ -860,6 +865,8 @@ with tab_primary:
                     gspread_module=gspread,
                     credentials_cls=Credentials,
                     target_date=st.session_state.get("active_order_date", date.today()).isoformat(),
+                    source_file=source_file,
+                    replace_existing=True,
                 )
                 if push_ok:
                     st.info(push_msg)
@@ -1017,6 +1024,21 @@ with tab_saved:
                         )
                         if upd_ok:
                             st.success(upd_msg)
+
+                            gsheet_ok, gsheet_msg = push_validated_items_to_google_sheet(
+                                editable_df,
+                                secrets=st.secrets,
+                                gspread_module=gspread,
+                                credentials_cls=Credentials,
+                                target_date=selected_saved_date,
+                                source_file=selected_saved_file,
+                                replace_existing=True,
+                            )
+                            if gsheet_ok:
+                                st.info(gsheet_msg)
+                            else:
+                                st.warning(gsheet_msg)
+
                             st.rerun()
                         else:
                             st.warning(upd_msg)
@@ -1028,6 +1050,19 @@ with tab_saved:
                         )
                         if rem_ok:
                             st.success(rem_msg)
+
+                            gsheet_rem_ok, gsheet_rem_msg = remove_validated_items_from_google_sheet(
+                                target_date=selected_saved_date,
+                                source_file=selected_saved_file,
+                                secrets=st.secrets,
+                                gspread_module=gspread,
+                                credentials_cls=Credentials,
+                            )
+                            if gsheet_rem_ok:
+                                st.info(gsheet_rem_msg)
+                            else:
+                                st.warning(gsheet_rem_msg)
+
                             st.rerun()
                         else:
                             st.warning(rem_msg)
