@@ -27,11 +27,21 @@ try:
         read_image,
         read_pdf,
     )
+    from infrastructure import google_sheets_service as google_sheets_service_module
     from infrastructure.google_sheets_service import (
         push_validated_items_to_google_sheet,
         push_consolidated_to_google_sheet,
-        remove_validated_items_from_google_sheet,
     )
+
+    # Backward compatibility for older deployments that do not yet include this helper.
+    remove_validated_items_from_google_sheet = getattr(
+        google_sheets_service_module,
+        "remove_validated_items_from_google_sheet",
+        None,
+    )
+    if remove_validated_items_from_google_sheet is None:
+        def remove_validated_items_from_google_sheet(*args, **kwargs):
+            return False, "Google Sheet removal helper is unavailable in this deployment version."
     from infrastructure.ocr_engine import extract_image_text as extract_image_text_service
     from infrastructure.ocr_engine import load_ocr_model
     from infrastructure.address_service import (
