@@ -42,6 +42,51 @@ try:
     if remove_validated_items_from_google_sheet is None:
         def remove_validated_items_from_google_sheet(*args, **kwargs):
             return False, "Google Sheet removal helper is unavailable in this deployment version."
+
+    load_validated_rows_from_google_sheet = getattr(
+        google_sheets_service_module,
+        "load_validated_rows_from_google_sheet",
+        None,
+    )
+    if load_validated_rows_from_google_sheet is None:
+        def load_validated_rows_from_google_sheet(*args, **kwargs):
+            return pd.DataFrame(), "Google Sheet read helper is unavailable in this deployment version."
+
+    list_saved_dates_from_google_sheet = getattr(
+        google_sheets_service_module,
+        "list_saved_dates_from_google_sheet",
+        None,
+    )
+    if list_saved_dates_from_google_sheet is None:
+        def list_saved_dates_from_google_sheet(*args, **kwargs):
+            return [], "Google Sheet date helper is unavailable in this deployment version."
+
+    load_items_count_rows_from_google_sheet = getattr(
+        google_sheets_service_module,
+        "load_items_count_rows_from_google_sheet",
+        None,
+    )
+    if load_items_count_rows_from_google_sheet is None:
+        def load_items_count_rows_from_google_sheet(*args, **kwargs):
+            return pd.DataFrame(), "ItemsCount read helper is unavailable in this deployment version."
+
+    sync_items_count_to_google_sheet = getattr(
+        google_sheets_service_module,
+        "sync_items_count_to_google_sheet",
+        None,
+    )
+    if sync_items_count_to_google_sheet is None:
+        def sync_items_count_to_google_sheet(*args, **kwargs):
+            return False, "ItemsCount sync helper is unavailable in this deployment version."
+
+    remove_items_count_from_google_sheet = getattr(
+        google_sheets_service_module,
+        "remove_items_count_from_google_sheet",
+        None,
+    )
+    if remove_items_count_from_google_sheet is None:
+        def remove_items_count_from_google_sheet(*args, **kwargs):
+            return False, "ItemsCount removal helper is unavailable in this deployment version."
     from infrastructure.ocr_engine import extract_image_text as extract_image_text_service
     from infrastructure.ocr_engine import load_ocr_model
     from infrastructure.address_service import (
@@ -323,6 +368,24 @@ if "pdf_detected_tables" not in st.session_state:
 if "pdf_mapped_rows" not in st.session_state:
     st.session_state["pdf_mapped_rows"] = []
 
+if "gsheet_validated_cache" not in st.session_state:
+    st.session_state["gsheet_validated_cache"] = pd.DataFrame()
+
+if "gsheet_validated_cache_loaded" not in st.session_state:
+    st.session_state["gsheet_validated_cache_loaded"] = False
+
+if "gsheet_validated_cache_msg" not in st.session_state:
+    st.session_state["gsheet_validated_cache_msg"] = ""
+
+if "gsheet_items_count_cache" not in st.session_state:
+    st.session_state["gsheet_items_count_cache"] = pd.DataFrame()
+
+if "gsheet_items_count_cache_loaded" not in st.session_state:
+    st.session_state["gsheet_items_count_cache_loaded"] = False
+
+if "gsheet_items_count_cache_msg" not in st.session_state:
+    st.session_state["gsheet_items_count_cache_msg"] = ""
+
 
 # ============================================================
 # UI ORCHESTRATION WRAPPERS
@@ -366,6 +429,147 @@ def detect_vegetables(text, return_details=False, parser_selection=None):
         auto_extract_threshold=confidence_auto_extract_threshold,
         client_name=client_name,
     )
+
+
+def invalidate_google_sheet_cache(validated=True, items_count=True):
+    if validated:
+        st.session_state["gsheet_validated_cache"] = pd.DataFrame()
+        st.session_state["gsheet_validated_cache_loaded"] = False
+        st.session_state["gsheet_validated_cache_msg"] = ""
+
+    if items_count:
+        st.session_state["gsheet_items_count_cache"] = pd.DataFrame()
+        st.session_state["gsheet_items_count_cache_loaded"] = False
+        st.session_state["gsheet_items_count_cache_msg"] = ""
+
+
+def get_cached_google_sheet_validated_rows(force_refresh=False):
+    if force_refresh:
+        invalidate_google_sheet_cache(validated=True, items_count=False)
+
+    if not st.session_state.get("gsheet_validated_cache_loaded", False):
+        sheet_df, sheet_msg = load_validated_rows_from_google_sheet(
+            secrets=st.secrets,
+            gspread_module=gspread,
+            credentials_cls=Credentials,
+        )
+        st.session_state["gsheet_validated_cache"] = sheet_df if sheet_df is not None else pd.DataFrame()
+        st.session_state["gsheet_validated_cache_loaded"] = True
+        st.session_state["gsheet_validated_cache_msg"] = sheet_msg
+
+    cache_df = st.session_state.get("gsheet_validated_cache", pd.DataFrame())
+    cache_msg = st.session_state.get("gsheet_validated_cache_msg", "")
+    return cache_df.copy(), cache_msg
+
+
+def get_cached_google_sheet_items_count_rows(force_refresh=False):
+    if force_refresh:
+        invalidate_google_sheet_cache(validated=False, items_count=True)
+
+    if not st.session_state.get("gsheet_items_count_cache_loaded", False):
+        sheet_df, sheet_msg = load_items_count_rows_from_google_sheet(
+            secrets=st.secrets,
+            gspread_module=gspread,
+            credentials_cls=Credentials,
+        )
+        st.session_state["gsheet_items_count_cache"] = sheet_df if sheet_df is not None else pd.DataFrame()
+        st.session_state["gsheet_items_count_cache_loaded"] = True
+        st.session_state["gsheet_items_count_cache_msg"] = sheet_msg
+
+    cache_df = st.session_state.get("gsheet_items_count_cache", pd.DataFrame())
+    cache_msg = st.session_state.get("gsheet_items_count_cache_msg", "")
+    return cache_df.copy(), cache_msg
+
+
+def get_cached_google_sheet_dates():
+    sheet_index_df, sheet_msg = get_cached_google_sheet_items_count_rows()
+    if sheet_index_df.empty or "Date" not in sheet_index_df.columns:
+        return [], sheet_msg
+
+    dates = [
+        str(x).strip()
+        for x in sheet_index_df["Date"].tolist()
+        if str(x).strip()
+    ]
+    return sorted(set(dates), reverse=True), sheet_msg
+
+
+def load_combined_rows_for_date(target_date, include_google_sheet=False, source_file="", client_name=""):
+    local_df = load_saved_rows_for_date(target_date)
+    if local_df is None or local_df.empty:
+        local_df = pd.DataFrame()
+    else:
+        local_df = local_df.fillna("")
+
+    if source_file and not local_df.empty and "Source File" in local_df.columns:
+        local_df = local_df[local_df["Source File"].astype(str).str.strip() == str(source_file).strip()].copy()
+    if client_name and not local_df.empty and "Client Name" in local_df.columns:
+        local_df = local_df[local_df["Client Name"].astype(str).str.strip() == str(client_name).strip()].copy()
+
+    if not include_google_sheet:
+        return local_df, ""
+
+    sheet_df, sheet_msg = get_cached_google_sheet_validated_rows()
+
+    if sheet_df is None or sheet_df.empty:
+        return local_df, sheet_msg
+
+    if "Date" in sheet_df.columns:
+        sheet_df = sheet_df[sheet_df["Date"].astype(str).str.strip() == str(target_date).strip()].copy()
+    if source_file and "Source File" in sheet_df.columns:
+        sheet_df = sheet_df[sheet_df["Source File"].astype(str).str.strip() == str(source_file).strip()].copy()
+    if client_name and "Client Name" in sheet_df.columns:
+        sheet_df = sheet_df[sheet_df["Client Name"].astype(str).str.strip() == str(client_name).strip()].copy()
+
+    if sheet_df.empty:
+        return local_df, sheet_msg
+
+    combined_df = pd.concat([local_df, sheet_df], ignore_index=True).fillna("")
+    combined_df = combined_df.astype(str)
+    combined_df = combined_df.drop_duplicates().reset_index(drop=True)
+    return combined_df, sheet_msg
+
+
+def load_combined_items_count_for_date(target_date, include_google_sheet=False):
+    local_df = load_saved_rows_for_date(target_date)
+    local_index_df = pd.DataFrame(columns=["Date", "Source File", "Client Name", "Count"])
+    if local_df is not None and not local_df.empty and "Source File" in local_df.columns:
+        grouping_cols = ["Source File"]
+        if "Client Name" in local_df.columns:
+            grouping_cols.append("Client Name")
+        grouped = local_df.groupby(grouping_cols, dropna=False).size().reset_index(name="Count")
+        grouped["Date"] = str(target_date)
+        if "Client Name" not in grouped.columns:
+            grouped["Client Name"] = ""
+        local_index_df = grouped[["Date", "Source File", "Client Name", "Count"]].fillna("")
+
+    if not include_google_sheet:
+        return local_index_df, ""
+
+    sheet_index_df, sheet_msg = get_cached_google_sheet_items_count_rows()
+
+    if sheet_index_df is None or sheet_index_df.empty:
+        return local_index_df, sheet_msg
+
+    if "Date" in sheet_index_df.columns:
+        sheet_index_df = sheet_index_df[
+            sheet_index_df["Date"].astype(str).str.strip() == str(target_date).strip()
+        ].copy()
+
+    if sheet_index_df.empty:
+        return local_index_df, sheet_msg
+
+    for col in ["Date", "Source File", "Client Name", "Count"]:
+        if col not in sheet_index_df.columns:
+            sheet_index_df[col] = ""
+
+    combined_index_df = pd.concat(
+        [local_index_df, sheet_index_df[["Date", "Source File", "Client Name", "Count"]]],
+        ignore_index=True,
+    ).fillna("")
+    combined_index_df = combined_index_df.astype(str)
+    combined_index_df = combined_index_df.drop_duplicates().reset_index(drop=True)
+    return combined_index_df, sheet_msg
 
 
 def inject_mobile_first_styles():
@@ -880,6 +1084,22 @@ with tab_primary:
                 )
                 if push_ok:
                     st.info(push_msg)
+                    invalidate_google_sheet_cache(validated=True, items_count=False)
+
+                    count_ok, count_msg = sync_items_count_to_google_sheet(
+                        target_date=st.session_state.get("active_order_date", date.today()).isoformat(),
+                        source_file=source_file,
+                        client_name=st.session_state.get("active_client_name", ""),
+                        item_count=len(final_df),
+                        secrets=st.secrets,
+                        gspread_module=gspread,
+                        credentials_cls=Credentials,
+                    )
+                    if count_ok:
+                        st.info(count_msg)
+                        invalidate_google_sheet_cache(validated=False, items_count=True)
+                    else:
+                        st.warning(count_msg)
                 else:
                     st.warning(push_msg)
 
@@ -932,11 +1152,26 @@ with tab_primary:
 with tab_saved:
     st.subheader("🗂️ Saved Orders")
 
-    saved_dates_for_tab = list_saved_dates()
+    include_sheet_saved_orders = st.checkbox(
+        "Include Google Sheet data",
+        value=True,
+        key="include_sheet_saved_orders_tab",
+        help="Shows saved orders from local CSV and validated Google Sheet rows.",
+    )
+
+    csv_dates_for_tab = list_saved_dates()
+    sheet_dates_for_tab = []
+    sheet_dates_msg = ""
+    if include_sheet_saved_orders:
+        sheet_dates_for_tab, sheet_dates_msg = get_cached_google_sheet_dates()
+
+    saved_dates_for_tab = sorted(set(csv_dates_for_tab + sheet_dates_for_tab), reverse=True)
     if not saved_dates_for_tab:
         st.info("Status: No saved dates yet.")
     else:
         st.info(f"Status: Available saved dates = {len(saved_dates_for_tab)}")
+        if include_sheet_saved_orders and sheet_dates_msg:
+            st.caption(f"Google Sheet: {sheet_dates_msg}")
 
     with st.expander("Saved Records and Revalidation", expanded=False):
         available_dates = saved_dates_for_tab
@@ -950,21 +1185,45 @@ with tab_saved:
                 key="selected_saved_date_tab",
             )
 
-            saved_by_date_df = load_saved_rows_for_date(selected_saved_date)
-            file_count = 0
-            if not saved_by_date_df.empty and "Source File" in saved_by_date_df.columns:
-                file_count = saved_by_date_df["Source File"].nunique()
-            st.info(
-                f"Status: Date = {selected_saved_date} | Rows = {len(saved_by_date_df)} | Files = {file_count}"
+            items_count_df, items_count_msg = load_combined_items_count_for_date(
+                selected_saved_date,
+                include_google_sheet=include_sheet_saved_orders,
             )
+            file_count = 0
+            if not items_count_df.empty and "Source File" in items_count_df.columns:
+                file_count = items_count_df["Source File"].astype(str).str.strip().nunique()
+            st.info(
+                f"Status: Date = {selected_saved_date} | Indexed files = {file_count}"
+            )
+            if include_sheet_saved_orders and items_count_msg:
+                st.caption(f"ItemsCount: {items_count_msg}")
 
-            if saved_by_date_df.empty:
+            if items_count_df.empty:
                 st.caption("No rows found for selected date.")
             else:
-                st.caption(f"Loaded {len(saved_by_date_df)} rows from {get_csv_path_for_date(selected_saved_date)}")
+                available_clients = [
+                    name
+                    for name in sorted(items_count_df["Client Name"].astype(str).str.strip().unique().tolist())
+                    if name
+                ]
 
-                if "Source File" in saved_by_date_df.columns:
-                    source_files = sorted(saved_by_date_df["Source File"].astype(str).unique().tolist())
+                if available_clients:
+                    selected_saved_client = st.selectbox(
+                        "Choose client",
+                        options=available_clients,
+                        key="saved_client_tab",
+                    )
+                else:
+                    selected_saved_client = ""
+
+                filtered_index_df = items_count_df.copy()
+                if selected_saved_client and "Client Name" in filtered_index_df.columns:
+                    filtered_index_df = filtered_index_df[
+                        filtered_index_df["Client Name"].astype(str).str.strip() == selected_saved_client
+                    ].copy()
+
+                if not filtered_index_df.empty and "Source File" in filtered_index_df.columns:
+                    source_files = sorted(filtered_index_df["Source File"].astype(str).str.strip().unique().tolist())
                 else:
                     source_files = []
 
@@ -975,7 +1234,12 @@ with tab_saved:
                         key="individual_saved_file_tab",
                     )
 
-                    selected_df = saved_by_date_df[saved_by_date_df["Source File"] == selected_saved_file].copy()
+                    selected_df, _ = load_combined_rows_for_date(
+                        selected_saved_date,
+                        include_google_sheet=include_sheet_saved_orders,
+                        source_file=selected_saved_file,
+                        client_name=selected_saved_client,
+                    )
 
                     img_path = ""
                     client_name = ""
@@ -1046,6 +1310,22 @@ with tab_saved:
                             )
                             if gsheet_ok:
                                 st.info(gsheet_msg)
+                                invalidate_google_sheet_cache(validated=True, items_count=False)
+
+                                count_ok, count_msg = sync_items_count_to_google_sheet(
+                                    target_date=selected_saved_date,
+                                    source_file=selected_saved_file,
+                                    client_name=client_name,
+                                    item_count=len(editable_df),
+                                    secrets=st.secrets,
+                                    gspread_module=gspread,
+                                    credentials_cls=Credentials,
+                                )
+                                if count_ok:
+                                    st.info(count_msg)
+                                    invalidate_google_sheet_cache(validated=False, items_count=True)
+                                else:
+                                    st.warning(count_msg)
                             else:
                                 st.warning(gsheet_msg)
 
@@ -1070,6 +1350,20 @@ with tab_saved:
                             )
                             if gsheet_rem_ok:
                                 st.info(gsheet_rem_msg)
+                                invalidate_google_sheet_cache(validated=True, items_count=False)
+
+                                count_rem_ok, count_rem_msg = remove_items_count_from_google_sheet(
+                                    target_date=selected_saved_date,
+                                    source_file=selected_saved_file,
+                                    secrets=st.secrets,
+                                    gspread_module=gspread,
+                                    credentials_cls=Credentials,
+                                )
+                                if count_rem_ok:
+                                    st.info(count_rem_msg)
+                                    invalidate_google_sheet_cache(validated=False, items_count=True)
+                                else:
+                                    st.warning(count_rem_msg)
                             else:
                                 st.warning(gsheet_rem_msg)
 
@@ -1117,7 +1411,19 @@ with tab_saved:
 with tab_consolidated:
     st.subheader("📦 Consolidated Orders")
 
-    consolidated_dates = list_saved_dates()
+    include_sheet_consolidated = st.checkbox(
+        "Include Google Sheet data",
+        value=True,
+        key="include_sheet_consolidated_tab",
+        help="Uses local CSV rows plus validated Google Sheet rows for consolidation.",
+    )
+
+    csv_consolidated_dates = list_saved_dates()
+    sheet_consolidated_dates = []
+    if include_sheet_consolidated:
+        sheet_consolidated_dates, _ = get_cached_google_sheet_dates()
+
+    consolidated_dates = sorted(set(csv_consolidated_dates + sheet_consolidated_dates), reverse=True)
     if not consolidated_dates:
         st.info("Status: No saved dates available for consolidation.")
     else:
@@ -1135,7 +1441,10 @@ with tab_consolidated:
                 key="selected_records_date_tab",
             )
 
-            saved_by_date_df = load_saved_rows_for_date(selected_records_date)
+            saved_by_date_df, _ = load_combined_rows_for_date(
+                selected_records_date,
+                include_google_sheet=include_sheet_consolidated,
+            )
             st.info(
                 f"Status: Date = {selected_records_date} | Source rows = {len(saved_by_date_df)}"
             )
@@ -1297,7 +1606,19 @@ with tab_consolidated:
 with tab_challan:
     st.subheader("📄 Delivery Challan")
 
-    challan_dates = list_saved_dates()
+    include_sheet_challan = st.checkbox(
+        "Include Google Sheet data",
+        value=True,
+        key="include_sheet_challan_tab",
+        help="Uses local CSV rows plus validated Google Sheet rows for challan selection.",
+    )
+
+    csv_challan_dates = list_saved_dates()
+    sheet_challan_dates = []
+    if include_sheet_challan:
+        sheet_challan_dates, _ = get_cached_google_sheet_dates()
+
+    challan_dates = sorted(set(csv_challan_dates + sheet_challan_dates), reverse=True)
     if not challan_dates:
         st.info("Status: No saved orders available for challan generation.")
     else:
@@ -1315,7 +1636,10 @@ with tab_challan:
                 key="selected_challan_date_tab",
             )
 
-            saved_by_date_df = load_saved_rows_for_date(selected_challan_date)
+            saved_by_date_df, _ = load_combined_rows_for_date(
+                selected_challan_date,
+                include_google_sheet=include_sheet_challan,
+            )
             file_count = 0
             if not saved_by_date_df.empty and "Source File" in saved_by_date_df.columns:
                 file_count = saved_by_date_df["Source File"].nunique()

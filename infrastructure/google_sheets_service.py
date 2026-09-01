@@ -1,13 +1,13 @@
 from datetime import date
 
 
-def _build_google_sheets_client(secrets, gspread_module, credentials_cls):
+def _build_google_sheets_client(secrets, gspread_module, credentials_cls, worksheet_name_override=None):
     if gspread_module is None or credentials_cls is None:
         return None, None, "Google Sheets libraries are not installed. Add gspread and google-auth dependencies."
 
     sheet_cfg = secrets.get("google_sheet", {})
     spreadsheet_id = sheet_cfg.get("spreadsheet_id", secrets.get("GOOGLE_SHEET_ID", ""))
-    worksheet_name = sheet_cfg.get("worksheet", secrets.get("GOOGLE_SHEET_WORKSHEET", "Sheet1"))
+    worksheet_name = worksheet_name_override or sheet_cfg.get("worksheet", secrets.get("GOOGLE_SHEET_WORKSHEET", "Sheet1"))
     creds_info = secrets.get("gcp_service_account", sheet_cfg.get("service_account", None))
 
     if not spreadsheet_id:
@@ -43,6 +43,32 @@ def _serialize_rows_for_headers(rows, headers):
             row_values.append(str(row.get(header, "")))
         serialized.append(row_values)
     return serialized
+
+
+def _load_worksheet_rows(worksheet, headers=None):
+    effective_headers = headers or worksheet.row_values(1)
+    if not effective_headers:
+        return [], []
+
+    all_values = worksheet.get_all_values()
+    normalized_rows = []
+    for raw_row in all_values[1:]:
+        row_map = {}
+        for idx, col_name in enumerate(effective_headers):
+            row_map[col_name] = raw_row[idx] if idx < len(raw_row) else ""
+        normalized_rows.append(row_map)
+    return effective_headers, normalized_rows
+
+
+def _rewrite_worksheet(worksheet, headers, rows):
+    worksheet.clear()
+    worksheet.update("A1", [headers], value_input_option="USER_ENTERED")
+    if rows:
+        worksheet.update(
+            "A2",
+            _serialize_rows_for_headers(rows, headers),
+            value_input_option="USER_ENTERED",
+        )
 
 
 def push_validated_items_to_google_sheet(
@@ -100,13 +126,7 @@ def push_validated_items_to_google_sheet(
             worksheet.append_rows(values, value_input_option="USER_ENTERED")
             return True, f"Pushed {len(values)} row(s) to Google Sheet ({worksheet_name})."
 
-        all_values = worksheet.get_all_values()
-        existing_rows = []
-        for raw_row in all_values[1:]:
-            row_map = {}
-            for idx, col_name in enumerate(existing_header):
-                row_map[col_name] = raw_row[idx] if idx < len(raw_row) else ""
-            existing_rows.append(row_map)
+        _, existing_rows = _load_worksheet_rows(worksheet, existing_header)
 
         target_date_str = target_date if target_date else date.today().isoformat()
         source_file_str = str(source_file or "")
@@ -178,13 +198,7 @@ def remove_validated_items_from_google_sheet(
                 "Cannot safely remove upload-specific rows without them."
             )
 
-        all_values = worksheet.get_all_values()
-        existing_rows = []
-        for raw_row in all_values[1:]:
-            row_map = {}
-            for idx, col_name in enumerate(header):
-                row_map[col_name] = raw_row[idx] if idx < len(raw_row) else ""
-            existing_rows.append(row_map)
+        _, existing_rows = _load_worksheet_rows(worksheet, header)
 
         kept_rows = []
         removed_count = 0
@@ -202,15 +216,7 @@ def remove_validated_items_from_google_sheet(
                 f"No Google Sheet rows found for source '{source_file_str}' on {target_date_str}."
             )
 
-        worksheet.clear()
-        worksheet.update("A1", [header], value_input_option="USER_ENTERED")
-
-        if kept_rows:
-            worksheet.update(
-                "A2",
-                _serialize_rows_for_headers(kept_rows, header),
-                value_input_option="USER_ENTERED",
-            )
+        _rewrite_worksheet(worksheet, header, kept_rows)
 
         return True, (
             f"Removed {removed_count} Google Sheet row(s) "
@@ -218,6 +224,217 @@ def remove_validated_items_from_google_sheet(
         )
     except Exception as err:
         return False, f"Google Sheet removal failed: {err}"
+
+
+def load_validated_rows_from_google_sheet(
+    secrets,
+    gspread_module,
+    credentials_cls,
+    target_date=None,
+    source_file="",
+    client_name="",
+):
+    """Load validated rows from the configured worksheet used for per-upload rows."""
+    worksheet, _, conn_err = _build_google_sheets_client(
+        secrets,
+        gspread_module,
+        credentials_cls,
+    )
+    if worksheet is None:
+        return None, conn_err
+
+    try:
+        import pandas as pd
+
+        header = worksheet.row_values(1)
+        if not header:
+            return pd.DataFrame(), "Google Sheet has no header row."
+
+        _, normalized_rows = _load_worksheet_rows(worksheet, header)
+
+        if not normalized_rows:
+            return pd.DataFrame(columns=header), "Google Sheet has no data rows."
+
+        df = pd.DataFrame(normalized_rows).fillna("")
+        if target_date is not None and "Date" in df.columns:
+            df = df[df["Date"].astype(str).str.strip() == str(target_date).strip()].copy()
+        if source_file and "Source File" in df.columns:
+            df = df[df["Source File"].astype(str).str.strip() == str(source_file).strip()].copy()
+        if client_name and "Client Name" in df.columns:
+            df = df[df["Client Name"].astype(str).str.strip() == str(client_name).strip()].copy()
+        df = df.reset_index(drop=True)
+        return df, f"Loaded {len(df)} row(s) from Google Sheet."
+    except Exception as err:
+        return None, f"Google Sheet read failed: {err}"
+
+
+def sync_items_count_to_google_sheet(
+    target_date,
+    source_file,
+    client_name,
+    item_count,
+    secrets,
+    gspread_module,
+    credentials_cls,
+):
+    worksheet, worksheet_name, conn_err = _build_google_sheets_client(
+        secrets,
+        gspread_module,
+        credentials_cls,
+        worksheet_name_override="ItemsCount",
+    )
+    if worksheet is None:
+        return False, conn_err
+
+    try:
+        headers = ["Date", "Source File", "Client Name", "Count"]
+        existing_header = worksheet.row_values(1)
+        if not existing_header:
+            existing_header = headers.copy()
+
+        final_headers = list(existing_header)
+        for col in headers:
+            if col not in final_headers:
+                final_headers.append(col)
+
+        _, existing_rows = _load_worksheet_rows(worksheet, existing_header)
+        target_date_str = str(target_date or "").strip()
+        source_file_str = str(source_file or "").strip()
+        client_name_str = str(client_name or "").strip()
+
+        filtered_rows = []
+        replaced_count = 0
+        for row in existing_rows:
+            if (
+                row.get("Date", "").strip() == target_date_str
+                and row.get("Source File", "").strip() == source_file_str
+            ):
+                replaced_count += 1
+                continue
+            filtered_rows.append(row)
+
+        filtered_rows.append({
+            "Date": target_date_str,
+            "Source File": source_file_str,
+            "Client Name": client_name_str,
+            "Count": str(int(item_count) if item_count is not None else 0),
+        })
+
+        _rewrite_worksheet(worksheet, final_headers, filtered_rows)
+        return True, (
+            f"Updated {worksheet_name} for source '{source_file_str}' on {target_date_str} "
+            f"with count {item_count} (replaced {replaced_count} row(s))."
+        )
+    except Exception as err:
+        return False, f"ItemsCount sync failed: {err}"
+
+
+def remove_items_count_from_google_sheet(
+    target_date,
+    source_file,
+    secrets,
+    gspread_module,
+    credentials_cls,
+):
+    worksheet, worksheet_name, conn_err = _build_google_sheets_client(
+        secrets,
+        gspread_module,
+        credentials_cls,
+        worksheet_name_override="ItemsCount",
+    )
+    if worksheet is None:
+        return False, conn_err
+
+    try:
+        header = worksheet.row_values(1)
+        if not header:
+            return True, "ItemsCount sheet is empty. Nothing to remove."
+
+        _, existing_rows = _load_worksheet_rows(worksheet, header)
+        target_date_str = str(target_date or "").strip()
+        source_file_str = str(source_file or "").strip()
+
+        kept_rows = []
+        removed_count = 0
+        for row in existing_rows:
+            if (
+                row.get("Date", "").strip() == target_date_str
+                and row.get("Source File", "").strip() == source_file_str
+            ):
+                removed_count += 1
+                continue
+            kept_rows.append(row)
+
+        if removed_count == 0:
+            return True, f"No ItemsCount rows found for source '{source_file_str}' on {target_date_str}."
+
+        _rewrite_worksheet(worksheet, header, kept_rows)
+        return True, f"Removed {removed_count} row(s) from {worksheet_name}."
+    except Exception as err:
+        return False, f"ItemsCount removal failed: {err}"
+
+
+def load_items_count_rows_from_google_sheet(
+    secrets,
+    gspread_module,
+    credentials_cls,
+    target_date=None,
+    client_name="",
+):
+    worksheet, _, conn_err = _build_google_sheets_client(
+        secrets,
+        gspread_module,
+        credentials_cls,
+        worksheet_name_override="ItemsCount",
+    )
+    if worksheet is None:
+        return None, conn_err
+
+    try:
+        import pandas as pd
+
+        header = worksheet.row_values(1)
+        if not header:
+            return pd.DataFrame(columns=["Date", "Source File", "Client Name", "Count"]), "ItemsCount sheet has no header row."
+
+        _, rows = _load_worksheet_rows(worksheet, header)
+        df = pd.DataFrame(rows).fillna("") if rows else pd.DataFrame(columns=header)
+
+        if target_date is not None and "Date" in df.columns:
+            df = df[df["Date"].astype(str).str.strip() == str(target_date).strip()].copy()
+        if client_name and "Client Name" in df.columns:
+            df = df[df["Client Name"].astype(str).str.strip() == str(client_name).strip()].copy()
+
+        df = df.reset_index(drop=True)
+        return df, f"Loaded {len(df)} ItemsCount row(s) from Google Sheet."
+    except Exception as err:
+        return None, f"ItemsCount read failed: {err}"
+
+
+def list_saved_dates_from_google_sheet(
+    secrets,
+    gspread_module,
+    credentials_cls,
+):
+    """Return available order dates found in Google Sheet index rows."""
+    sheet_df, sheet_msg = load_items_count_rows_from_google_sheet(
+        secrets,
+        gspread_module,
+        credentials_cls,
+    )
+
+    if sheet_df is None:
+        return [], sheet_msg
+
+    if sheet_df.empty or "Date" not in sheet_df.columns:
+        return [], sheet_msg
+
+    dates = [
+        str(x).strip()
+        for x in sheet_df["Date"].tolist()
+        if str(x).strip()
+    ]
+    return sorted(set(dates), reverse=True), sheet_msg
 
 
 def push_consolidated_to_google_sheet(
