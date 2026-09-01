@@ -8,10 +8,7 @@ try:
 except ImportError:
     cv2 = None
 
-try:
-    from paddleocr import PaddleOCR
-except ImportError:
-    PaddleOCR = None
+PaddleOCR = None
 
 try:
     import pytesseract
@@ -25,6 +22,15 @@ if pytesseract is not None:
 
 
 def load_ocr_model():
+    global PaddleOCR
+
+    if PaddleOCR is None:
+        try:
+            from paddleocr import PaddleOCR as PaddleOCRClass
+            PaddleOCR = PaddleOCRClass
+        except Exception:
+            return None
+
     if PaddleOCR is None:
         return None
 
