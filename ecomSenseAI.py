@@ -4,7 +4,7 @@ import json
 import shutil
 import logging
 import traceback
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 # Configure logging for Streamlit Cloud
@@ -637,6 +637,30 @@ st.title("🛒 ecomSense AI")
 st.subheader(
     "Multilingual Grocery Document Extractor"
 )
+
+cache_col_1, cache_col_2 = st.columns([1, 3])
+with cache_col_1:
+    refresh_cache_clicked = st.button(
+        "🔄 Refresh Google Cache",
+        key="refresh_google_cache_btn",
+        help="Reload Google Sheet snapshots (ItemsCount + validated rows) once and keep using local cache.",
+    )
+
+with cache_col_2:
+    if refresh_cache_clicked:
+        if gspread is None or Credentials is None:
+            st.warning("Google Sheets integration is not available in this environment.")
+        else:
+            validated_df, validated_msg = get_cached_google_sheet_validated_rows(force_refresh=True)
+            items_count_df, items_count_msg = get_cached_google_sheet_items_count_rows(force_refresh=True)
+            st.success(
+                "Cache refreshed: "
+                f"Validated rows={len(validated_df)} | ItemsCount rows={len(items_count_df)}"
+            )
+            if validated_msg:
+                st.caption(f"Validated sheet: {validated_msg}")
+            if items_count_msg:
+                st.caption(f"ItemsCount sheet: {items_count_msg}")
 
 with st.expander("📱 Install On Mobile (PWA-Style)", expanded=False):
     st.markdown(
