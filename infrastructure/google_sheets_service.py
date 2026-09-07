@@ -78,6 +78,7 @@ def push_validated_items_to_google_sheet(
     credentials_cls,
     target_date=None,
     source_file="",
+    client_name="",
     replace_existing=False,
 ):
     """
@@ -104,6 +105,13 @@ def push_validated_items_to_google_sheet(
         # Add Date column (use target_date if provided, otherwise today)
         push_df["Date"] = target_date if target_date else date.today().isoformat()
         push_df["Source File"] = str(source_file or "")
+        if "Client Name" in push_df.columns:
+            if client_name:
+                push_df["Client Name"] = str(client_name)
+            else:
+                push_df["Client Name"] = push_df["Client Name"].astype(str).fillna("")
+        else:
+            push_df["Client Name"] = str(client_name or "")
         push_df = push_df.fillna("")
         
         # Reorder columns to put Order and Date first

@@ -483,28 +483,77 @@ def get_cached_google_sheet_items_count_rows(force_refresh=False):
 
 def get_cached_google_sheet_dates():
     sheet_index_df, sheet_msg = get_cached_google_sheet_items_count_rows()
-    if sheet_index_df.empty or "Date" not in sheet_index_df.columns:
-        return [], sheet_msg
+    validated_df, validated_msg = get_cached_google_sheet_validated_rows()
 
-    dates = [
-        str(x).strip()
-        for x in sheet_index_df["Date"].tolist()
-        if str(x).strip()
-    ]
-    return sorted(set(dates), reverse=True), sheet_msg
+    dates = []
+    if not sheet_index_df.empty and "Date" in sheet_index_df.columns:
+        dates.extend([
+            normalize_date_key(x)
+            for x in sheet_index_df["Date"].tolist()
+            if normalize_date_key(x)
+        ])
+
+    if not validated_df.empty and "Date" in validated_df.columns:
+        dates.extend([
+            normalize_date_key(x)
+            for x in validated_df["Date"].tolist()
+            if normalize_date_key(x)
+        ])
+
+    status_parts = []
+    if sheet_msg:
+        status_parts.append(f"ItemsCount: {sheet_msg}")
+    if validated_msg:
+        status_parts.append(f"Validated: {validated_msg}")
+
+    return sorted(set(dates), reverse=True), " | ".join(status_parts)
+
+
+def normalize_date_key(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+
+    parsed = pd.to_datetime(raw, errors="coerce")
+    if pd.isna(parsed):
+        parsed = pd.to_datetime(raw, errors="coerce", dayfirst=True)
+
+    if pd.isna(parsed):
+        return raw
+
+    return parsed.date().isoformat()
+
+
+def filter_df_by_date(df, date_col, target_date):
+    if df is None or df.empty or date_col not in df.columns:
+        return df
+
+    target_key = normalize_date_key(target_date)
+    if not target_key:
+        return df
+
+    date_keys = df[date_col].astype(str).map(normalize_date_key)
+    return df[date_keys == target_key].copy()
 
 
 def load_combined_rows_for_date(target_date, include_google_sheet=False, source_file="", client_name=""):
+    target_date_key = normalize_date_key(target_date)
+
     local_df = load_saved_rows_for_date(target_date)
     if local_df is None or local_df.empty:
         local_df = pd.DataFrame()
     else:
         local_df = local_df.fillna("")
+        local_df = filter_df_by_date(local_df, "Date", target_date_key)
 
     if source_file and not local_df.empty and "Source File" in local_df.columns:
         local_df = local_df[local_df["Source File"].astype(str).str.strip() == str(source_file).strip()].copy()
     if client_name and not local_df.empty and "Client Name" in local_df.columns:
-        local_df = local_df[local_df["Client Name"].astype(str).str.strip() == str(client_name).strip()].copy()
+        local_client_filtered = local_df[
+            local_df["Client Name"].astype(str).str.strip() == str(client_name).strip()
+        ].copy()
+        if not local_client_filtered.empty or not source_file:
+            local_df = local_client_filtered
 
     if not include_google_sheet:
         return local_df, ""
@@ -515,11 +564,15 @@ def load_combined_rows_for_date(target_date, include_google_sheet=False, source_
         return local_df, sheet_msg
 
     if "Date" in sheet_df.columns:
-        sheet_df = sheet_df[sheet_df["Date"].astype(str).str.strip() == str(target_date).strip()].copy()
+        sheet_df = filter_df_by_date(sheet_df, "Date", target_date_key)
     if source_file and "Source File" in sheet_df.columns:
         sheet_df = sheet_df[sheet_df["Source File"].astype(str).str.strip() == str(source_file).strip()].copy()
     if client_name and "Client Name" in sheet_df.columns:
-        sheet_df = sheet_df[sheet_df["Client Name"].astype(str).str.strip() == str(client_name).strip()].copy()
+        sheet_client_filtered = sheet_df[
+            sheet_df["Client Name"].astype(str).str.strip() == str(client_name).strip()
+        ].copy()
+        if not sheet_client_filtered.empty or not source_file:
+            sheet_df = sheet_client_filtered
 
     if sheet_df.empty:
         return local_df, sheet_msg
@@ -531,6 +584,8 @@ def load_combined_rows_for_date(target_date, include_google_sheet=False, source_
 
 
 def load_combined_items_count_for_date(target_date, include_google_sheet=False):
+    target_date_key = normalize_date_key(target_date)
+
     local_df = load_saved_rows_for_date(target_date)
     local_index_df = pd.DataFrame(columns=["Date", "Source File", "Client Name", "Count"])
     if local_df is not None and not local_df.empty and "Source File" in local_df.columns:
@@ -538,7 +593,7 @@ def load_combined_items_count_for_date(target_date, include_google_sheet=False):
         if "Client Name" in local_df.columns:
             grouping_cols.append("Client Name")
         grouped = local_df.groupby(grouping_cols, dropna=False).size().reset_index(name="Count")
-        grouped["Date"] = str(target_date)
+        grouped["Date"] = target_date_key
         if "Client Name" not in grouped.columns:
             grouped["Client Name"] = ""
         local_index_df = grouped[["Date", "Source File", "Client Name", "Count"]].fillna("")
@@ -548,13 +603,30 @@ def load_combined_items_count_for_date(target_date, include_google_sheet=False):
 
     sheet_index_df, sheet_msg = get_cached_google_sheet_items_count_rows()
 
-    if sheet_index_df is None or sheet_index_df.empty:
-        return local_index_df, sheet_msg
+    if sheet_index_df is None:
+        sheet_index_df = pd.DataFrame()
 
     if "Date" in sheet_index_df.columns:
-        sheet_index_df = sheet_index_df[
-            sheet_index_df["Date"].astype(str).str.strip() == str(target_date).strip()
-        ].copy()
+        sheet_index_df = filter_df_by_date(sheet_index_df, "Date", target_date_key)
+
+    if sheet_index_df.empty:
+        # Fallback: derive index rows from validated sheet cache for this date.
+        validated_df, validated_msg = get_cached_google_sheet_validated_rows()
+        if validated_df is not None and not validated_df.empty and "Date" in validated_df.columns:
+            validated_date_df = filter_df_by_date(validated_df, "Date", target_date_key)
+            if not validated_date_df.empty and "Source File" in validated_date_df.columns:
+                grouping_cols = ["Source File"]
+                if "Client Name" in validated_date_df.columns:
+                    grouping_cols.append("Client Name")
+                grouped = validated_date_df.groupby(grouping_cols, dropna=False).size().reset_index(name="Count")
+                grouped["Date"] = target_date_key
+                if "Client Name" not in grouped.columns:
+                    grouped["Client Name"] = ""
+                sheet_index_df = grouped[["Date", "Source File", "Client Name", "Count"]].fillna("")
+                if sheet_msg:
+                    sheet_msg = f"{sheet_msg} | Fallback indexed from validated rows."
+                else:
+                    sheet_msg = f"Fallback indexed from validated rows. {validated_msg}"
 
     if sheet_index_df.empty:
         return local_index_df, sheet_msg
@@ -1104,6 +1176,7 @@ with tab_primary:
                     credentials_cls=Credentials,
                     target_date=st.session_state.get("active_order_date", date.today()).isoformat(),
                     source_file=source_file,
+                    client_name=st.session_state.get("active_client_name", ""),
                     replace_existing=True,
                 )
                 if push_ok:
@@ -1265,6 +1338,19 @@ with tab_saved:
                         client_name=selected_saved_client,
                     )
 
+                    # Fallback for client-name mismatch between ItemsCount and validated rows.
+                    if selected_df.empty and selected_saved_client:
+                        selected_df, _ = load_combined_rows_for_date(
+                            selected_saved_date,
+                            include_google_sheet=include_sheet_saved_orders,
+                            source_file=selected_saved_file,
+                            client_name="",
+                        )
+                        if not selected_df.empty:
+                            st.caption(
+                                "Loaded rows by Date + Source File fallback (client name mismatch across sheets)."
+                            )
+
                     img_path = ""
                     client_name = ""
                     if "Uploaded Image Path" in selected_df.columns and not selected_df.empty:
@@ -1330,6 +1416,7 @@ with tab_saved:
                                 credentials_cls=Credentials,
                                 target_date=selected_saved_date,
                                 source_file=selected_saved_file,
+                                client_name=client_name,
                                 replace_existing=True,
                             )
                             if gsheet_ok:
