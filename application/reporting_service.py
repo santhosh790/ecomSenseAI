@@ -2,10 +2,47 @@ import io
 import os
 import re
 import sys
+from html import escape
 from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
+
+
+def merge_saved_order_rows(local_df, sheet_df):
+    if local_df is None or local_df.empty:
+        local_rows = pd.DataFrame()
+    else:
+        local_rows = local_df.copy()
+
+    if sheet_df is None or sheet_df.empty:
+        sheet_rows = pd.DataFrame()
+    else:
+        sheet_rows = sheet_df.copy()
+
+    if local_rows.empty:
+        return sheet_rows.fillna("").astype(str).reset_index(drop=True)
+    if sheet_rows.empty:
+        return local_rows.fillna("").astype(str).reset_index(drop=True)
+
+    upload_key_columns = ["Date", "Source File"]
+    if not all(
+        column in frame.columns
+        for frame in (local_rows, sheet_rows)
+        for column in upload_key_columns
+    ):
+        combined = pd.concat([local_rows, sheet_rows], ignore_index=True).fillna("")
+        return combined.astype(str).drop_duplicates().reset_index(drop=True)
+
+    def upload_key(row):
+        return tuple(str(row[column]).strip() for column in upload_key_columns)
+
+    sheet_upload_keys = {upload_key(row) for _, row in sheet_rows.iterrows()}
+    local_upload_keys = local_rows.apply(upload_key, axis=1)
+    local_rows = local_rows[~local_upload_keys.isin(sheet_upload_keys)].copy()
+
+    combined = pd.concat([local_rows, sheet_rows], ignore_index=True).fillna("")
+    return combined.astype(str).reset_index(drop=True)
 
 
 def _configure_macos_weasyprint_loader_paths():
@@ -58,6 +95,22 @@ def _prepare_quantity_fields(df):
         .fillna("KG")
     )
     return working_df
+
+
+def format_individual_order_summary(df, total_order_value=""):
+    item_count = len(df)
+    total_weight = 0.0
+    if not df.empty and {"Total Quantity", "Unit"}.issubset(df.columns):
+        quantities = pd.to_numeric(df["Total Quantity"], errors="coerce").fillna(0.0)
+        units = df["Unit"].astype(str).str.strip().str.upper().replace({"KGS": "KG"})
+        total_weight = quantities[units == "KG"].sum()
+
+    weight_text = f"{total_weight:,.2f}".rstrip("0").rstrip(".")
+    amount_text = str(total_order_value or "").strip() or "Not detected"
+    return (
+        f"Total Items: {item_count} | Total Weight: {weight_text} KG | "
+        f"Total Amount: {amount_text}"
+    )
 
 
 def consolidate(df):
@@ -248,6 +301,8 @@ def export_excel(
     footer_text="",
     client_name="",
     order_date=None,
+    purchase_order_number="",
+    total_order_value="",
 ):
     from openpyxl.drawing.image import Image as XLImage
     from openpyxl.styles import Alignment
@@ -304,9 +359,15 @@ def export_excel(
         ws.merge_cells('A1:D1')
         ws["A1"] = str(header_text or "")
         ws["A3"] = date_line_text
+        if str(purchase_order_number or "").strip():
+            ws["A4"] = f"PO Number: {str(purchase_order_number).strip()}"
+        if str(total_order_value or "").strip():
+            ws["A5"] = f"Total Order Value: {str(total_order_value).strip()}"
 
         ws["A1"].font = Font(size=18, bold=True)
         ws["A3"].font = Font(name=tamil_font_name, size=13)
+        ws["A4"].font = Font(size=12)
+        ws["A5"].font = Font(size=12)
 
         ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
         ws["A3"].alignment = Alignment(horizontal="left")
@@ -314,6 +375,8 @@ def export_excel(
         ws.column_dimensions["A"].width = 36
         ws.row_dimensions[1].height = 30
         ws.row_dimensions[3].height = 24
+        ws.row_dimensions[4].height = 20
+        ws.row_dimensions[5].height = 20
 
         header_row = 7
         for col_idx in range(1, len(export_df.columns) + 1):
@@ -346,6 +409,9 @@ def export_pdf(
     footer_text="",
     client_name="",
     order_date=None,
+    purchase_order_number="",
+    total_order_value="",
+    order_totals_summary="",
 ):
     _configure_macos_weasyprint_loader_paths()
     from weasyprint import HTML
@@ -368,6 +434,8 @@ def export_pdf(
         except:
             pass
     client_text = str(client_name or "").strip()
+    purchase_order_text = escape(str(purchase_order_number or "").strip())
+    total_order_text = escape(str(total_order_value or "").strip())
     
     # Preserve original extraction order (no sorting)
     df_sorted = df.copy()
@@ -413,8 +481,8 @@ def export_pdf(
         )
 
     client_header_html = "".join([f'<th class="num">{col}</th>' for col in client_cols])
-    footer_summary = f"மொத்தம் {len(df)} பொருட்கள்"
-    if client_text:
+    footer_summary = str(order_totals_summary or "").strip() or f"மொத்தம் {len(df)} பொருட்கள்"
+    if not str(order_totals_summary or "").strip() and client_text:
         footer_summary = f"{footer_summary} | வாடிக்கையாளர்: {client_text}"
 
     logo_html = ""
@@ -537,7 +605,9 @@ def export_pdf(
             <div><b>தேதி:</b> {date_str}</div>
         </div>
     </div>
-  <table>
+        {'<div class="order-metadata"><b>PO Number:</b> ' + purchase_order_text + '</div>' if purchase_order_text else ''}
+        {'<div class="order-metadata"><b>Total Order Value:</b> ' + total_order_text + '</div>' if total_order_text else ''}
+    <table>
     <thead>
       <tr>
         <th>#</th>

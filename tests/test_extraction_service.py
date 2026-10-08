@@ -3,6 +3,8 @@ import unittest
 from application.extraction_service import apply_confidence_policy
 from application.extraction_service import detect_vegetables
 from application.extraction_service import detect_vegetables_from_mapped_rows
+from application.extraction_service import extract_purchase_order_number
+from application.extraction_service import extract_total_order_value
 from application.extraction_service import extract_row_fields
 from application.extraction_service import extract_row_quantity
 from application.extraction_service import fuzzy_match_vegetable_name
@@ -52,6 +54,55 @@ NOISE_LINE_PATTERNS = [
 
 
 class ExtractionServiceTests(unittest.TestCase):
+    def test_extract_purchase_order_number_inline_and_multiline_labels(self):
+        test_cases = [
+            ("PO Number 8110170328", "8110170328"),
+            ("PO Number:\n8110170328", "8110170328"),
+            ("Purchase Order No.: ABC/2026-27/15", "ABC/2026-27/15"),
+            ("Order Number # 45001", "45001"),
+            (
+                "Order No. :\nDated :\n08/10/2026\nCPU/R-P.O-00578_26-27.",
+                "CPU/R-P.O-00578_26-27",
+            ),
+            ("PO. No.\nDate\nVIT Vellore\nVITV_PO0772.", "VITV_PO0772"),
+            (
+                "Doc No :\nDoc Date :\nDepartment :\nBuyer Group:\n"
+                "MHS/PR/P000476_26-27\nKITCHEN\n31/07/2026\nPlant:",
+                "MHS/PR/P000476_26-27",
+            ),
+        ]
+
+        for text, expected in test_cases:
+            with self.subTest(text=text):
+                self.assertEqual(extract_purchase_order_number(text), expected)
+
+    def test_extract_purchase_order_number_does_not_confuse_po_date(self):
+        self.assertEqual(
+            extract_purchase_order_number("PO Date\n27.07.2026\nPO Type\nZFPO"),
+            "",
+        )
+
+    def test_extract_total_order_value_from_words_or_gross_amount(self):
+        test_cases = [
+            (
+                "Amount in words (INR) : Twenty Five Thousand Eight Hundred Sixty Nine Rupees Only",
+                "INR 25,869.00 (Twenty Five Thousand Eight Hundred Sixty Nine Rupees Only)",
+            ),
+            (
+                "Amount (in words) : INR Twenty Four Thousand One Hundred Five Only",
+                "INR 24,105.00 (Twenty Four Thousand One Hundred Five Only)",
+            ),
+            (
+                "Gross Amount (INR):\n0.000\n9,485.00\n"
+                "Rupees in words: NINE THOUSAND FOUR HUNDRED EIGHTY FIVE Rupees only.",
+                "INR 9,485.00 (NINE THOUSAND FOUR HUNDRED EIGHTY FIVE Rupees only)",
+            ),
+        ]
+
+        for text, expected in test_cases:
+            with self.subTest(text=text):
+                self.assertEqual(extract_total_order_value(text), expected)
+
     def test_extract_row_fields_table_style(self):
         line = "1 206558 CORINDER_UB_1X1KG KG 45"
         material, qty = extract_row_fields(line)

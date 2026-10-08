@@ -116,7 +116,6 @@ def push_validated_items_to_google_sheet(
         
         # Reorder columns to put Order and Date first
         cols = push_df.columns.tolist()
-        # Move Order to first, Date to second
         cols.remove("Order")
         cols.remove("Date")
         cols.remove("Source File")
@@ -284,6 +283,8 @@ def sync_items_count_to_google_sheet(
     secrets,
     gspread_module,
     credentials_cls,
+    purchase_order_number=None,
+    total_order_value=None,
 ):
     worksheet, worksheet_name, conn_err = _build_google_sheets_client(
         secrets,
@@ -295,7 +296,7 @@ def sync_items_count_to_google_sheet(
         return False, conn_err
 
     try:
-        headers = ["Date", "Source File", "Client Name", "Count"]
+        headers = ["Date", "Source File", "Client Name", "Count", "PO Number", "Total Order Value"]
         existing_header = worksheet.row_values(1)
         if not existing_header:
             existing_header = headers.copy()
@@ -311,6 +312,7 @@ def sync_items_count_to_google_sheet(
         client_name_str = str(client_name or "").strip()
 
         filtered_rows = []
+        replaced_rows = []
         replaced_count = 0
         for row in existing_rows:
             if (
@@ -318,14 +320,28 @@ def sync_items_count_to_google_sheet(
                 and row.get("Source File", "").strip() == source_file_str
             ):
                 replaced_count += 1
+                replaced_rows.append(row)
                 continue
             filtered_rows.append(row)
+
+        if purchase_order_number is None:
+            purchase_order_number = next(
+                (row.get("PO Number", "") for row in replaced_rows if str(row.get("PO Number", "")).strip()),
+                "",
+            )
+        if total_order_value is None:
+            total_order_value = next(
+                (row.get("Total Order Value", "") for row in replaced_rows if str(row.get("Total Order Value", "")).strip()),
+                "",
+            )
 
         filtered_rows.append({
             "Date": target_date_str,
             "Source File": source_file_str,
             "Client Name": client_name_str,
             "Count": str(int(item_count) if item_count is not None else 0),
+            "PO Number": str(purchase_order_number or ""),
+            "Total Order Value": str(total_order_value or ""),
         })
 
         _rewrite_worksheet(worksheet, final_headers, filtered_rows)

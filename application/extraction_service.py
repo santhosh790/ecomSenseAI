@@ -9,6 +9,180 @@ except ImportError:
 from domain.models import VegetableDetection
 
 
+def extract_purchase_order_number(text):
+    if not text:
+        return ""
+
+    label_pattern = re.compile(
+        r"^\s*(?:PURCHASE\s+ORDER|P\.?\s*O\.?|ORDER|DOC(?:UMENT)?)\s*(?:NUMBER|NO\.?|#)\s*[:#-]?\s*(.*)$",
+        flags=re.IGNORECASE,
+    )
+    value_pattern = re.compile(r"^[A-Z0-9][A-Z0-9./_-]*$", flags=re.IGNORECASE)
+    metadata_label_pattern = re.compile(
+        r"^(?:(?:PURCHASE\s+ORDER|P\.?\s*O\.?|ORDER|DOC(?:UMENT)?)\s*(?:DATE|TYPE|DELIVERY|NUMBER|NO\.?|#)|DATED?)\b",
+        flags=re.IGNORECASE,
+    )
+    date_value_pattern = re.compile(r"^\d{1,4}[./-]\d{1,2}[./-]\d{2,4}$")
+    lines = str(text).splitlines()
+
+    for index, line in enumerate(lines):
+        match = label_pattern.match(line)
+        if not match:
+            continue
+
+        inline_value = match.group(1).strip()
+        values = [inline_value] if inline_value else lines[index + 1:index + 10]
+
+        for value in values:
+            value = value.strip()
+            if not value or metadata_label_pattern.match(value):
+                continue
+
+            candidate = value.split()[0].strip(":#,. ;)]}")
+            if (
+                value_pattern.fullmatch(candidate)
+                and re.search(r"\d", candidate)
+                and not date_value_pattern.fullmatch(candidate)
+            ):
+                return candidate
+
+    return ""
+
+
+def extract_total_order_value(text):
+    if not text:
+        return ""
+
+    lines = str(text).splitlines()
+    gross_amount_pattern = re.compile(
+        r"^\s*GROSS\s+AMOUNT(?:\s*\(\s*INR\s*\))?\s*[:#-]?\s*(.*)$",
+        flags=re.IGNORECASE,
+    )
+    words_amount_pattern = re.compile(
+        r"^\s*(?:AMOUNT\s*(?:IN\s+WORDS|\(\s*IN\s+WORDS\s*\))"
+        r"(?:\s*\(\s*INR\s*\))?|RUPEES\s+IN\s+WORDS)\s*[:#-]?\s*(.*)$",
+        flags=re.IGNORECASE,
+    )
+    amount_label_pattern = re.compile(
+        r"^\s*(?:AMOUNT\s*(?:IN\s+WORDS|\(\s*IN\s+WORDS\s*\))|RUPEES\s+IN\s+WORDS)\b",
+        flags=re.IGNORECASE,
+    )
+    numeric_amount_pattern = re.compile(
+        r"(?<![A-Z0-9/])(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![A-Z0-9/])",
+        flags=re.IGNORECASE,
+    )
+
+    numeric_total = ""
+    for index, line in enumerate(lines):
+        gross_match = gross_amount_pattern.match(line)
+        if gross_match:
+            amount_values = []
+            gross_lines = [gross_match.group(1), *lines[index + 1:index + 7]]
+            for value_line in gross_lines:
+                if amount_label_pattern.match(value_line):
+                    break
+                amount_values.extend(numeric_amount_pattern.findall(value_line))
+            if amount_values:
+                numeric_total = amount_values[-1]
+                break
+
+    words_value = ""
+    for index, line in enumerate(lines):
+        words_match = words_amount_pattern.match(line)
+        if not words_match:
+            continue
+
+        value = words_match.group(1).strip()
+        if not value:
+            for next_line in lines[index + 1:index + 5]:
+                value = next_line.strip()
+                if value:
+                    break
+
+        value = value.rstrip(" .;:")
+        if value:
+            words_value = re.sub(r"^INR\s+", "", value, flags=re.IGNORECASE)
+            break
+
+    if numeric_total:
+        if words_value:
+            return f"INR {numeric_total} ({words_value})"
+        return f"INR {numeric_total}"
+
+    if words_value:
+        amount_number = amount_words_to_number(words_value)
+        if amount_number is not None:
+            return f"INR {amount_number:,.2f} ({words_value})"
+
+    return ""
+
+
+def amount_words_to_number(amount_words):
+    number_words = {
+        "ZERO": 0,
+        "ONE": 1,
+        "TWO": 2,
+        "THREE": 3,
+        "FOUR": 4,
+        "FIVE": 5,
+        "SIX": 6,
+        "SEVEN": 7,
+        "EIGHT": 8,
+        "NINE": 9,
+        "TEN": 10,
+        "ELEVEN": 11,
+        "TWELVE": 12,
+        "THIRTEEN": 13,
+        "FOURTEEN": 14,
+        "FIFTEEN": 15,
+        "SIXTEEN": 16,
+        "SEVENTEEN": 17,
+        "EIGHTEEN": 18,
+        "NINETEEN": 19,
+        "TWENTY": 20,
+        "THIRTY": 30,
+        "FORTY": 40,
+        "FIFTY": 50,
+        "SIXTY": 60,
+        "SEVENTY": 70,
+        "EIGHTY": 80,
+        "NINETY": 90,
+    }
+    scales = {
+        "THOUSAND": 1_000,
+        "LAKH": 100_000,
+        "LAKHS": 100_000,
+        "LAC": 100_000,
+        "LACS": 100_000,
+        "CRORE": 10_000_000,
+        "CRORES": 10_000_000,
+    }
+    ignored_words = {"AND", "INR", "RUPEE", "RUPEES", "ONLY"}
+    tokens = re.sub(r"[^A-Z\s-]", " ", str(amount_words).upper())
+    tokens = tokens.replace("-", " ").split()
+    total = 0
+    current = 0
+    found_number = False
+
+    for token in tokens:
+        if token in ignored_words:
+            continue
+        if token in number_words:
+            current += number_words[token]
+            found_number = True
+        elif token == "HUNDRED":
+            current = max(current, 1) * 100
+            found_number = True
+        elif token in scales:
+            total += max(current, 1) * scales[token]
+            current = 0
+            found_number = True
+        else:
+            return None
+
+    return total + current if found_number else None
+
+
 def normalize_text(text):
     normalized = re.sub(r"[^A-Za-z0-9]+", " ", str(text).upper())
     return re.sub(r"\s+", " ", normalized).strip()

@@ -19,7 +19,9 @@ try:
     from application.vegetable_detection_service import detect_vegetables as detect_vegetables_service
     from application.vegetable_detection_service import find_canonical_vegetable_name as find_canonical_vegetable_name_service
     from application.vegetable_catalog_service import load_vegetable_catalog
-    from application.reporting_service import consolidate, consolidate_with_client_columns, export_excel, export_pdf, export_delivery_challan_excel, export_delivery_challan_pdf
+    from application.reporting_service import consolidate, consolidate_with_client_columns, format_individual_order_summary, merge_saved_order_rows, export_excel, export_pdf, export_delivery_challan_excel, export_delivery_challan_pdf
+    from application.extraction_service import extract_purchase_order_number
+    from application.extraction_service import extract_total_order_value
     from application.extraction_service import normalize_text as normalize_text_service
     from infrastructure.assets_service import get_default_logo_data_uri, get_default_logo_path
     from infrastructure.document_readers import (
@@ -222,6 +224,12 @@ VEGETABLE_CATALOG = load_vegetable_catalog()
 
 if "raw_text" not in st.session_state:
     st.session_state.raw_text = ""
+
+if "purchase_order_number" not in st.session_state:
+    st.session_state["purchase_order_number"] = ""
+
+if "total_order_value" not in st.session_state:
+    st.session_state["total_order_value"] = ""
 
 if "items" not in st.session_state:
     st.session_state["items"] = []
@@ -577,9 +585,7 @@ def load_combined_rows_for_date(target_date, include_google_sheet=False, source_
     if sheet_df.empty:
         return local_df, sheet_msg
 
-    combined_df = pd.concat([local_df, sheet_df], ignore_index=True).fillna("")
-    combined_df = combined_df.astype(str)
-    combined_df = combined_df.drop_duplicates().reset_index(drop=True)
+    combined_df = merge_saved_order_rows(local_df, sheet_df)
     return combined_df, sheet_msg
 
 
@@ -587,7 +593,9 @@ def load_combined_items_count_for_date(target_date, include_google_sheet=False):
     target_date_key = normalize_date_key(target_date)
 
     local_df = load_saved_rows_for_date(target_date)
-    local_index_df = pd.DataFrame(columns=["Date", "Source File", "Client Name", "Count"])
+    local_index_df = pd.DataFrame(
+        columns=["Date", "Source File", "Client Name", "Count", "PO Number", "Total Order Value"]
+    )
     if local_df is not None and not local_df.empty and "Source File" in local_df.columns:
         grouping_cols = ["Source File"]
         if "Client Name" in local_df.columns:
@@ -597,6 +605,9 @@ def load_combined_items_count_for_date(target_date, include_google_sheet=False):
         if "Client Name" not in grouped.columns:
             grouped["Client Name"] = ""
         local_index_df = grouped[["Date", "Source File", "Client Name", "Count"]].fillna("")
+    for col in ["PO Number", "Total Order Value"]:
+        if col not in local_index_df.columns:
+            local_index_df[col] = ""
 
     if not include_google_sheet:
         return local_index_df, ""
@@ -631,16 +642,27 @@ def load_combined_items_count_for_date(target_date, include_google_sheet=False):
     if sheet_index_df.empty:
         return local_index_df, sheet_msg
 
-    for col in ["Date", "Source File", "Client Name", "Count"]:
+    for col in ["Date", "Source File", "Client Name", "Count", "PO Number", "Total Order Value"]:
         if col not in sheet_index_df.columns:
             sheet_index_df[col] = ""
 
+    key_cols = ["Date", "Source File", "Client Name"]
+    metadata_cols = ["PO Number", "Total Order Value"]
     combined_index_df = pd.concat(
-        [local_index_df, sheet_index_df[["Date", "Source File", "Client Name", "Count"]]],
+        [local_index_df, sheet_index_df[[*key_cols, "Count"]]],
         ignore_index=True,
     ).fillna("")
     combined_index_df = combined_index_df.astype(str)
     combined_index_df = combined_index_df.drop_duplicates().reset_index(drop=True)
+    metadata_by_order = (
+        sheet_index_df[[*key_cols, *metadata_cols]]
+        .fillna("")
+        .astype(str)
+        .drop_duplicates(subset=key_cols, keep="last")
+    )
+    combined_index_df = combined_index_df.drop(columns=metadata_cols, errors="ignore")
+    combined_index_df = combined_index_df.merge(metadata_by_order, on=key_cols, how="left")
+    combined_index_df[metadata_cols] = combined_index_df[metadata_cols].fillna("")
     return combined_index_df, sheet_msg
 
 
@@ -969,6 +991,12 @@ with tab_primary:
     if st.button("🔍 Extract Groceries"):
         client_name = st.session_state.get("active_client_name", "")
         parser_selection = st.session_state.get("parser_selection", "Generic")
+        st.session_state["purchase_order_number"] = extract_purchase_order_number(
+            st.session_state.raw_text
+        )
+        st.session_state["total_order_value"] = extract_total_order_value(
+            st.session_state.raw_text
+        )
         
         # Always use raw text extraction with selected parser
         items, extraction_report = detect_vegetables(
@@ -1002,6 +1030,18 @@ with tab_primary:
 
     if st.session_state["items"]:
         st.subheader("✏️ Validate Extraction")
+        st.text_input(
+            "PO Number",
+            key="purchase_order_number",
+            placeholder="Not detected",
+            help="Extracted from the document. You can correct it before confirming.",
+        )
+        st.text_input(
+            "Total Order Value",
+            key="total_order_value",
+            placeholder="Not detected",
+            help="Extracted from the document. You can correct it before confirming.",
+        )
 
         try:
             items_list = list(st.session_state["items"]) if st.session_state["items"] else []
@@ -1191,6 +1231,8 @@ with tab_primary:
                         secrets=st.secrets,
                         gspread_module=gspread,
                         credentials_cls=Credentials,
+                        purchase_order_number=st.session_state.get("purchase_order_number", ""),
+                        total_order_value=st.session_state.get("total_order_value", ""),
                     )
                     if count_ok:
                         st.info(count_msg)
@@ -1215,15 +1257,21 @@ with tab_primary:
             # Get short name for reports
             client_full_name = st.session_state.get("active_client_name", "")
             client_short_name = get_client_short_name(client_full_name) if client_full_name else ""
+            individual_order_summary = format_individual_order_summary(
+                confirmed_df,
+                st.session_state.get("total_order_value", ""),
+            )
             
             confirmed_excel = export_excel(
                 confirmed_df,
                 logo_path=get_default_logo_path(),
                 header_text="PKS FRESH",
                 above_list_text="",
-                footer_text="",
+                footer_text=individual_order_summary,
                 client_name=client_short_name,
                 order_date=order_date_for_export,
+                purchase_order_number=st.session_state.get("purchase_order_number", ""),
+                total_order_value=st.session_state.get("total_order_value", ""),
             )
             confirmed_pdf = export_pdf(
                 confirmed_df,
@@ -1233,6 +1281,9 @@ with tab_primary:
                 footer_text="",
                 client_name=client_short_name,
                 order_date=order_date_for_export,
+                purchase_order_number=st.session_state.get("purchase_order_number", ""),
+                total_order_value=st.session_state.get("total_order_value", ""),
+                order_totals_summary=individual_order_summary,
             )
 
             st.download_button(
@@ -1486,6 +1537,23 @@ with tab_saved:
                     st.markdown("### Download Individual Order")
                     st.dataframe(individual_df, use_container_width=True)
 
+                    selected_order_rows = filtered_index_df[
+                        filtered_index_df["Source File"].astype(str).str.strip() == selected_saved_file
+                    ]
+
+                    def get_saved_order_value(column_name):
+                        if column_name not in selected_order_rows.columns:
+                            return ""
+                        values = selected_order_rows[column_name].astype(str).str.strip().tolist()
+                        return next((value for value in values if value and value.lower() != "nan"), "")
+
+                    saved_po_number = get_saved_order_value("PO Number")
+                    saved_total_value = get_saved_order_value("Total Order Value")
+                    individual_order_summary = format_individual_order_summary(
+                        individual_df,
+                        saved_total_value,
+                    )
+
                     # Get short name for reports
                     client_short_name = get_client_short_name(client_name) if client_name else ""
                     
@@ -1494,9 +1562,11 @@ with tab_saved:
                         logo_path=get_default_logo_path(),
                         header_text="PKS FRESH",
                         above_list_text="",
-                        footer_text="",
+                        footer_text=individual_order_summary,
                         client_name=client_short_name,
                         order_date=selected_saved_date,
+                        purchase_order_number=saved_po_number,
+                        total_order_value=saved_total_value,
                     )
                     individual_pdf = export_pdf(
                         individual_df,
@@ -1505,7 +1575,10 @@ with tab_saved:
                         above_list_text="",
                         footer_text="",
                         client_name=client_short_name,
-                        order_date=selected_saved_date
+                        order_date=selected_saved_date,
+                        purchase_order_number=saved_po_number,
+                        total_order_value=saved_total_value,
+                        order_totals_summary=individual_order_summary,
                     )
 
                     st.download_button(
