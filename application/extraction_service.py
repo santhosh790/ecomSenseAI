@@ -54,37 +54,11 @@ def extract_total_order_value(text):
         return ""
 
     lines = str(text).splitlines()
-    gross_amount_pattern = re.compile(
-        r"^\s*GROSS\s+AMOUNT(?:\s*\(\s*INR\s*\))?\s*[:#-]?\s*(.*)$",
-        flags=re.IGNORECASE,
-    )
     words_amount_pattern = re.compile(
         r"^\s*(?:AMOUNT\s*(?:IN\s+WORDS|\(\s*IN\s+WORDS\s*\))"
         r"(?:\s*\(\s*INR\s*\))?|RUPEES\s+IN\s+WORDS)\s*[:#-]?\s*(.*)$",
         flags=re.IGNORECASE,
     )
-    amount_label_pattern = re.compile(
-        r"^\s*(?:AMOUNT\s*(?:IN\s+WORDS|\(\s*IN\s+WORDS\s*\))|RUPEES\s+IN\s+WORDS)\b",
-        flags=re.IGNORECASE,
-    )
-    numeric_amount_pattern = re.compile(
-        r"(?<![A-Z0-9/])(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![A-Z0-9/])",
-        flags=re.IGNORECASE,
-    )
-
-    numeric_total = ""
-    for index, line in enumerate(lines):
-        gross_match = gross_amount_pattern.match(line)
-        if gross_match:
-            amount_values = []
-            gross_lines = [gross_match.group(1), *lines[index + 1:index + 7]]
-            for value_line in gross_lines:
-                if amount_label_pattern.match(value_line):
-                    break
-                amount_values.extend(numeric_amount_pattern.findall(value_line))
-            if amount_values:
-                numeric_total = amount_values[-1]
-                break
 
     words_value = ""
     for index, line in enumerate(lines):
@@ -103,11 +77,6 @@ def extract_total_order_value(text):
         if value:
             words_value = re.sub(r"^INR\s+", "", value, flags=re.IGNORECASE)
             break
-
-    if numeric_total:
-        if words_value:
-            return f"INR {numeric_total} ({words_value})"
-        return f"INR {numeric_total}"
 
     if words_value:
         amount_number = amount_words_to_number(words_value)

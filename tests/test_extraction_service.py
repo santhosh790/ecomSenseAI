@@ -93,7 +93,7 @@ class ExtractionServiceTests(unittest.TestCase):
                 "INR 24,105.00 (Twenty Four Thousand One Hundred Five Only)",
             ),
             (
-                "Gross Amount (INR):\n0.000\n9,485.00\n"
+                "Gross Amount (INR):\n0.000\n99,999.00\n"
                 "Rupees in words: NINE THOUSAND FOUR HUNDRED EIGHTY FIVE Rupees only.",
                 "INR 9,485.00 (NINE THOUSAND FOUR HUNDRED EIGHTY FIVE Rupees only)",
             ),
@@ -102,6 +102,9 @@ class ExtractionServiceTests(unittest.TestCase):
         for text, expected in test_cases:
             with self.subTest(text=text):
                 self.assertEqual(extract_total_order_value(text), expected)
+
+    def test_extract_total_order_value_ignores_gross_amount_without_words(self):
+        self.assertEqual(extract_total_order_value("Gross Amount (INR): 9,485.00"), "")
 
     def test_extract_row_fields_table_style(self):
         line = "1 206558 CORINDER_UB_1X1KG KG 45"

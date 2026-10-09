@@ -36,16 +36,16 @@ class IndividualDownloadMetadataTests(unittest.TestCase):
         summary = format_individual_order_summary(SAMPLE_ITEMS, "INR 1,250.00")
         content = export_excel(
             SAMPLE_ITEMS,
+            client_name="MHS",
             footer_text=summary,
             purchase_order_number="PO-123",
             total_order_value="INR 1,250.00 (One Thousand Two Hundred Fifty Only)",
         )
         worksheet = load_workbook(io.BytesIO(content), data_only=True)["Vegetables"]
-        self.assertEqual(worksheet["A4"].value, "PO Number: PO-123")
-        self.assertEqual(
-            worksheet["A5"].value,
-            "Total Order Value: INR 1,250.00 (One Thousand Two Hundred Fifty Only)",
-        )
+        self.assertIn("வாடிக்கையாளர்: MHS", worksheet["A3"].value)
+        self.assertIn("PO Number: PO-123", worksheet["A3"].value)
+        self.assertIsNone(worksheet["A4"].value)
+        self.assertIsNone(worksheet["A5"].value)
         self.assertIn("Total Items: 1 | Total Weight: 2 KG | Total Amount: INR 1,250.00", worksheet["A10"].value)
 
         default_content = export_excel(SAMPLE_ITEMS)
@@ -68,13 +68,14 @@ class IndividualDownloadMetadataTests(unittest.TestCase):
         with patch.dict(sys.modules, {"weasyprint": fake_weasyprint}):
             export_pdf(
                 SAMPLE_ITEMS,
+                client_name="MHS",
                 purchase_order_number="PO-123",
                 total_order_value="INR 1,250.00",
                 order_totals_summary="Total Items: 1 | Total Weight: 2 KG | Total Amount: INR 1,250.00",
             )
 
-        self.assertIn("PO Number:</b> PO-123", captured_html[0])
-        self.assertIn("Total Order Value:</b> INR 1,250.00", captured_html[0])
+        self.assertIn("வாடிக்கையாளர்:</b> MHS    |    <b>PO Number:</b> PO-123", captured_html[0])
+        self.assertNotIn("Total Order Value:</b>", captured_html[0])
         self.assertIn("Total Items: 1 | Total Weight: 2 KG | Total Amount: INR 1,250.00", captured_html[0])
 
 

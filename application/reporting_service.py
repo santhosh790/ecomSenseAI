@@ -344,9 +344,14 @@ def export_excel(
         export_df[" "] = ""
 
     client_text = str(client_name or "").strip()
-    date_line_text = f"தேதி: {date_str}"
+    purchase_order_text = str(purchase_order_number or "").strip()
+    header_parts = []
     if client_text:
-        date_line_text = f"வாடிக்கையாளர்: {client_text}    |    {date_line_text}"
+        header_parts.append(f"வாடிக்கையாளர்: {client_text}")
+    if purchase_order_text:
+        header_parts.append(f"PO Number: {purchase_order_text}")
+    header_parts.append(f"தேதி: {date_str}")
+    date_line_text = "    |    ".join(header_parts)
     if str(above_list_text or "").strip():
         date_line_text = f"{date_line_text}    |    {str(above_list_text)}"
 
@@ -357,26 +362,19 @@ def export_excel(
 
         # Merge cells for centered header
         ws.merge_cells('A1:D1')
+        ws.merge_cells('A3:D3')
         ws["A1"] = str(header_text or "")
         ws["A3"] = date_line_text
-        if str(purchase_order_number or "").strip():
-            ws["A4"] = f"PO Number: {str(purchase_order_number).strip()}"
-        if str(total_order_value or "").strip():
-            ws["A5"] = f"Total Order Value: {str(total_order_value).strip()}"
 
         ws["A1"].font = Font(size=18, bold=True)
         ws["A3"].font = Font(name=tamil_font_name, size=13)
-        ws["A4"].font = Font(size=12)
-        ws["A5"].font = Font(size=12)
 
         ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
-        ws["A3"].alignment = Alignment(horizontal="left")
+        ws["A3"].alignment = Alignment(horizontal="center")
 
         ws.column_dimensions["A"].width = 36
         ws.row_dimensions[1].height = 30
         ws.row_dimensions[3].height = 24
-        ws.row_dimensions[4].height = 20
-        ws.row_dimensions[5].height = 20
 
         header_row = 7
         for col_idx in range(1, len(export_df.columns) + 1):
@@ -433,9 +431,8 @@ def export_pdf(
             date_str = date_obj.strftime("%d-%m-%Y")
         except:
             pass
-    client_text = str(client_name or "").strip()
+    client_text = escape(str(client_name or "").strip())
     purchase_order_text = escape(str(purchase_order_number or "").strip())
-    total_order_text = escape(str(total_order_value or "").strip())
     
     # Preserve original extraction order (no sorting)
     df_sorted = df.copy()
@@ -601,12 +598,10 @@ def export_pdf(
             </div>
         </div>
         <div class=\"header-right\">
-            {'<div><b>வாடிக்கையாளர்:</b> ' + client_text + '</div>' if client_text else ''}
+            {'<div><b>வாடிக்கையாளர்:</b> ' + client_text + ('    |    <b>PO Number:</b> ' + purchase_order_text if purchase_order_text else '') + '</div>' if client_text else ('<div><b>PO Number:</b> ' + purchase_order_text + '</div>' if purchase_order_text else '')}
             <div><b>தேதி:</b> {date_str}</div>
         </div>
     </div>
-        {'<div class="order-metadata"><b>PO Number:</b> ' + purchase_order_text + '</div>' if purchase_order_text else ''}
-        {'<div class="order-metadata"><b>Total Order Value:</b> ' + total_order_text + '</div>' if total_order_text else ''}
     <table>
     <thead>
       <tr>
