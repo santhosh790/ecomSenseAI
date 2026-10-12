@@ -4,6 +4,7 @@ from enum import Enum
 from io import BytesIO
 import json
 import os
+import tomllib
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -33,10 +34,14 @@ from infrastructure.document_readers import read_excel, read_image, read_pdf
 from infrastructure.google_sheets_service import (
     load_items_count_rows_from_google_sheet,
     load_validated_rows_from_google_sheet,
-    push_validated_items_to_google_sheet,
-    sync_items_count_to_google_sheet,
 )
+from infrastructure.database import resolve_database_url
 from infrastructure.ocr_engine import extract_image_text, load_ocr_model
+from infrastructure.order_repository import (
+    get_order_metadata,
+    load_order_rows,
+    save_order as save_order_to_database,
+)
 from infrastructure.persistence_service import (
     load_saved_rows_for_date,
     save_validated_items_to_csv,
@@ -81,9 +86,8 @@ class ConfirmOrderResponse(BaseModel):
     order_date: date
     source_file: str
     item_count: int
+    database_saved: bool
     csv_saved: bool
-    google_sheet_saved: bool
-    items_count_saved: bool
     messages: list[str]
 
 
@@ -124,6 +128,19 @@ if cors_origins:
         allow_methods=["GET", "POST"],
         allow_headers=["Authorization", "Content-Type"],
     )
+
+
+def _database_url() -> str | None:
+    database_url = resolve_database_url()
+    if database_url:
+        return database_url
+
+    secrets_path = Path(__file__).resolve().parent.parent / ".streamlit" / "secrets.toml"
+    try:
+        secrets = tomllib.loads(secrets_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    return resolve_database_url(secrets)
 
 
 def _google_sheet_secrets() -> dict[str, Any] | None:
@@ -219,10 +236,22 @@ def _order_rows(order_date: date, source_file: str | None = None) -> pd.DataFram
             sheet_rows["Source File"].astype(str).str.strip() == source_file.strip()
         ].copy()
 
-    return merge_saved_order_rows(local_rows, sheet_rows)
+    combined_rows = merge_saved_order_rows(local_rows, sheet_rows)
+    database_url = _database_url()
+    if database_url:
+        database_rows = load_order_rows(database_url, order_date, source_file)
+        if not database_rows.empty:
+            combined_rows = merge_saved_order_rows(combined_rows, database_rows)
+    return combined_rows
 
 
 def _order_metadata(order_date: date, source_file: str) -> dict[str, str]:
+    database_url = _database_url()
+    if database_url:
+        metadata = get_order_metadata(database_url, order_date, source_file)
+        if metadata:
+            return metadata
+
     secrets = _google_sheet_secrets()
     if secrets is None:
         return {"PO Number": "", "Total Order Value": ""}
@@ -373,18 +402,29 @@ def confirm_order(request: ConfirmOrderRequest):
     if not source_file:
         raise HTTPException(status_code=422, detail="source_file is required.")
 
-    secrets = _google_sheet_secrets()
-    if secrets is None:
+    database_url = _database_url()
+    if database_url is None:
         raise HTTPException(
             status_code=503,
-            detail=(
-                "Google Sheets are not configured. Set GOOGLE_SHEET_ID and either "
-                "GOOGLE_SHEETS_SERVICE_ACCOUNT_JSON or GOOGLE_APPLICATION_CREDENTIALS."
-            ),
+            detail="PostgreSQL is not configured. Set DATABASE_URL before confirming orders.",
         )
-    gspread, credentials_cls = _google_sheet_clients()
     items_df = _items_dataframe(request.items)
     items_df["Parser Strategy"] = request.parser_strategy.value
+
+    try:
+        save_order_to_database(
+            database_url=database_url,
+            order_date=request.order_date,
+            source_file=source_file,
+            items=items_df.to_dict(orient="records"),
+            client_name=request.client_name,
+            parser_strategy=request.parser_strategy.value,
+            purchase_order_number=request.purchase_order_number,
+            total_order_value=request.total_order_value,
+            upload_type=request.upload_type,
+        )
+    except Exception as error:
+        raise HTTPException(status_code=500, detail="Could not save order to PostgreSQL.") from error
 
     csv_ok, csv_message = save_validated_items_to_csv(
         items_df,
@@ -394,43 +434,16 @@ def confirm_order(request: ConfirmOrderRequest):
         upload_type=request.upload_type,
         client_name=request.client_name,
     )
+    messages = [csv_message]
     if not csv_ok:
-        raise HTTPException(status_code=422, detail=csv_message)
-
-    sheet_ok, sheet_message = push_validated_items_to_google_sheet(
-        items_df,
-        secrets=secrets,
-        gspread_module=gspread,
-        credentials_cls=credentials_cls,
-        target_date=request.order_date.isoformat(),
-        source_file=source_file,
-        client_name=request.client_name,
-        replace_existing=True,
-    )
-
-    items_count_ok = False
-    messages = [csv_message, sheet_message]
-    if sheet_ok:
-        items_count_ok, count_message = sync_items_count_to_google_sheet(
-            target_date=request.order_date.isoformat(),
-            source_file=source_file,
-            client_name=request.client_name,
-            item_count=len(items_df),
-            secrets=secrets,
-            gspread_module=gspread,
-            credentials_cls=credentials_cls,
-            purchase_order_number=request.purchase_order_number,
-            total_order_value=request.total_order_value,
-        )
-        messages.append(count_message)
+        messages.append("PostgreSQL save succeeded; CSV compatibility mirror failed.")
 
     return ConfirmOrderResponse(
         order_date=request.order_date,
         source_file=source_file,
         item_count=len(items_df),
-        csv_saved=True,
-        google_sheet_saved=sheet_ok,
-        items_count_saved=items_count_ok,
+        database_saved=True,
+        csv_saved=csv_ok,
         messages=messages,
     )
 

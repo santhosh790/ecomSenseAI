@@ -29,6 +29,15 @@ try:
         read_image,
         read_pdf,
     )
+    from infrastructure.database import resolve_database_url
+    from infrastructure.order_repository import (
+        get_order_metadata as get_database_order_metadata,
+        delete_order as delete_database_order,
+        list_order_dates,
+        load_order_index,
+        load_order_rows,
+        save_order,
+    )
     from infrastructure import google_sheets_service as google_sheets_service_module
     from infrastructure.google_sheets_service import (
         push_validated_items_to_google_sheet,
@@ -532,6 +541,22 @@ def normalize_date_key(value):
     return parsed.date().isoformat()
 
 
+def get_active_database_url():
+    try:
+        secrets = st.secrets
+    except Exception:
+        secrets = None
+    return resolve_database_url(secrets)
+
+
+def list_all_saved_dates():
+    dates = list_saved_dates()
+    database_url = get_active_database_url() or None
+    if database_url:
+        dates.extend(list_order_dates(database_url))
+    return sorted(set(dates), reverse=True)
+
+
 def filter_df_by_date(df, date_col, target_date):
     if df is None or df.empty or date_col not in df.columns:
         return df
@@ -563,34 +588,49 @@ def load_combined_rows_for_date(target_date, include_google_sheet=False, source_
         if not local_client_filtered.empty or not source_file:
             local_df = local_client_filtered
 
-    if not include_google_sheet:
-        return local_df, ""
-
-    sheet_df, sheet_msg = get_cached_google_sheet_validated_rows()
-
-    if sheet_df is None or sheet_df.empty:
-        return local_df, sheet_msg
-
-    if "Date" in sheet_df.columns:
-        sheet_df = filter_df_by_date(sheet_df, "Date", target_date_key)
-    if source_file and "Source File" in sheet_df.columns:
-        sheet_df = sheet_df[sheet_df["Source File"].astype(str).str.strip() == str(source_file).strip()].copy()
-    if client_name and "Client Name" in sheet_df.columns:
-        sheet_client_filtered = sheet_df[
-            sheet_df["Client Name"].astype(str).str.strip() == str(client_name).strip()
-        ].copy()
-        if not sheet_client_filtered.empty or not source_file:
-            sheet_df = sheet_client_filtered
-
-    if sheet_df.empty:
-        return local_df, sheet_msg
+    sheet_df = pd.DataFrame()
+    sheet_msg = ""
+    if include_google_sheet:
+        sheet_df, sheet_msg = get_cached_google_sheet_validated_rows()
+        if sheet_df is None:
+            sheet_df = pd.DataFrame()
+        if "Date" in sheet_df.columns:
+            sheet_df = filter_df_by_date(sheet_df, "Date", target_date_key)
+        if source_file and "Source File" in sheet_df.columns:
+            sheet_df = sheet_df[
+                sheet_df["Source File"].astype(str).str.strip() == str(source_file).strip()
+            ].copy()
+        if client_name and "Client Name" in sheet_df.columns:
+            sheet_client_filtered = sheet_df[
+                sheet_df["Client Name"].astype(str).str.strip() == str(client_name).strip()
+            ].copy()
+            if not sheet_client_filtered.empty or not source_file:
+                sheet_df = sheet_client_filtered
 
     combined_df = merge_saved_order_rows(local_df, sheet_df)
+    database_url = get_active_database_url()
+    if database_url and target_date_key:
+        database_df = load_order_rows(
+            database_url,
+            pd.Timestamp(target_date_key).date(),
+            source_file=source_file or None,
+        )
+        if client_name and not database_df.empty and "Client Name" in database_df.columns:
+            database_df = database_df[
+                database_df["Client Name"].astype(str).str.strip() == str(client_name).strip()
+            ].copy()
+        combined_df = merge_saved_order_rows(combined_df, database_df)
     return combined_df, sheet_msg
 
 
 def load_combined_items_count_for_date(target_date, include_google_sheet=False):
     target_date_key = normalize_date_key(target_date)
+    database_url = get_active_database_url()
+    database_index_df = (
+        load_order_index(database_url, pd.Timestamp(target_date_key).date())
+        if database_url and target_date_key
+        else pd.DataFrame()
+    )
 
     local_df = load_saved_rows_for_date(target_date)
     local_index_df = pd.DataFrame(
@@ -610,7 +650,7 @@ def load_combined_items_count_for_date(target_date, include_google_sheet=False):
             local_index_df[col] = ""
 
     if not include_google_sheet:
-        return local_index_df, ""
+        return merge_saved_order_rows(local_index_df, database_index_df), ""
 
     sheet_index_df, sheet_msg = get_cached_google_sheet_items_count_rows()
 
@@ -640,7 +680,7 @@ def load_combined_items_count_for_date(target_date, include_google_sheet=False):
                     sheet_msg = f"Fallback indexed from validated rows. {validated_msg}"
 
     if sheet_index_df.empty:
-        return local_index_df, sheet_msg
+        return merge_saved_order_rows(local_index_df, database_index_df), sheet_msg
 
     for col in ["Date", "Source File", "Client Name", "Count", "PO Number", "Total Order Value"]:
         if col not in sheet_index_df.columns:
@@ -663,6 +703,7 @@ def load_combined_items_count_for_date(target_date, include_google_sheet=False):
     combined_index_df = combined_index_df.drop(columns=metadata_cols, errors="ignore")
     combined_index_df = combined_index_df.merge(metadata_by_order, on=key_cols, how="left")
     combined_index_df[metadata_cols] = combined_index_df[metadata_cols].fillna("")
+    combined_index_df = merge_saved_order_rows(combined_index_df, database_index_df)
     return combined_index_df, sheet_msg
 
 
@@ -1167,10 +1208,10 @@ with tab_primary:
                 st.info(f"📊 All {len(edited_df)} row(s) will be saved (no deletions)")
 
         st.checkbox(
-            "Also push confirmed rows to Google Sheet",
+            "Write to Google Sheets (unchecked: PostgreSQL)",
             key="push_gsheet_on_confirm",
-            help="CSV save is always done. Enable this only when Sheet secrets are configured. Adds Order and Date columns to preserve extraction sequence.",
-            value=True,
+            help="Choose one primary store for this order. CSV is kept as a compatibility mirror.",
+            value=False,
         )
 
         if st.button("✅ Confirm"):
@@ -1194,6 +1235,30 @@ with tab_primary:
             st.success(f"✅ Validated successfully - {len(final_df)} item(s) confirmed")
 
             source_file = st.session_state.get("active_source_file", "Unknown_File")
+            write_to_google_sheets = st.session_state.get("push_gsheet_on_confirm", False)
+            database_url = get_active_database_url()
+            if not write_to_google_sheets and not database_url:
+                st.error("DATABASE_URL is required when PostgreSQL is selected.")
+                st.stop()
+            if database_url:
+                try:
+                    save_order(
+                        database_url=database_url,
+                        order_date=pd.Timestamp(selected_date).date(),
+                        source_file=source_file,
+                        items=final_df.to_dict(orient="records"),
+                        client_name=st.session_state.get("active_client_name", ""),
+                        parser_strategy=st.session_state.get("parser_selection", "Generic"),
+                        purchase_order_number=st.session_state.get("purchase_order_number", ""),
+                        total_order_value=st.session_state.get("total_order_value", ""),
+                        upload_type=st.session_state.get("active_upload_type", ""),
+                        uploaded_image_path=st.session_state.get("active_uploaded_image_path", ""),
+                    )
+                    st.success("Saved order to PostgreSQL.")
+                except Exception as error:
+                    st.error(f"PostgreSQL save failed: {error}")
+                    st.stop()
+
             csv_ok, csv_msg = save_validated_items_to_csv(
                 final_df,
                 source_file=source_file,
@@ -1208,7 +1273,7 @@ with tab_primary:
             else:
                 st.warning(csv_msg)
 
-            if st.session_state.get("push_gsheet_on_confirm", False):
+            if write_to_google_sheets:
                 push_ok, push_msg = push_validated_items_to_google_sheet(
                     final_df,
                     secrets=st.secrets,
@@ -1222,6 +1287,12 @@ with tab_primary:
                 if push_ok:
                     st.info(push_msg)
                     invalidate_google_sheet_cache(validated=True, items_count=False)
+                    if database_url:
+                        delete_database_order(
+                            database_url,
+                            pd.Timestamp(selected_date).date(),
+                            source_file,
+                        )
 
                     count_ok, count_msg = sync_items_count_to_google_sheet(
                         target_date=st.session_state.get("active_order_date", date.today()).isoformat(),
@@ -1307,7 +1378,7 @@ with tab_saved:
         help="Shows saved orders from local CSV and validated Google Sheet rows.",
     )
 
-    csv_dates_for_tab = list_saved_dates()
+    csv_dates_for_tab = list_all_saved_dates()
     sheet_dates_for_tab = []
     sheet_dates_msg = ""
     if include_sheet_saved_orders:
@@ -1448,6 +1519,12 @@ with tab_saved:
                         if "Upload Type" in selected_df.columns and not selected_df.empty:
                             upload_type = str(selected_df["Upload Type"].iloc[0]).strip()
 
+                        write_to_google_sheets = st.session_state.get("push_gsheet_on_confirm", False)
+                        database_url = get_active_database_url()
+                        if not write_to_google_sheets and not database_url:
+                            st.error("DATABASE_URL is required when PostgreSQL is selected.")
+                            st.stop()
+
                         upd_ok, upd_msg = save_validated_items_to_csv(
                             editable_df,
                             source_file=selected_saved_file,
@@ -1460,36 +1537,84 @@ with tab_saved:
                         if upd_ok:
                             st.success(upd_msg)
 
-                            gsheet_ok, gsheet_msg = push_validated_items_to_google_sheet(
-                                editable_df,
-                                secrets=st.secrets,
-                                gspread_module=gspread,
-                                credentials_cls=Credentials,
-                                target_date=selected_saved_date,
-                                source_file=selected_saved_file,
-                                client_name=client_name,
-                                replace_existing=True,
-                            )
-                            if gsheet_ok:
-                                st.info(gsheet_msg)
-                                invalidate_google_sheet_cache(validated=True, items_count=False)
+                            if database_url:
+                                try:
+                                    order_index_rows = filtered_index_df[
+                                        filtered_index_df["Source File"].astype(str).str.strip()
+                                        == selected_saved_file
+                                    ]
+                                    index_metadata = order_index_rows.iloc[0] if not order_index_rows.empty else {}
+                                    previous_metadata = get_database_order_metadata(
+                                        database_url,
+                                        pd.Timestamp(selected_saved_date).date(),
+                                        selected_saved_file,
+                                    )
+                                    save_order(
+                                        database_url=database_url,
+                                        order_date=pd.Timestamp(selected_saved_date).date(),
+                                        source_file=selected_saved_file,
+                                        items=editable_df.to_dict(orient="records"),
+                                        client_name=client_name,
+                                        parser_strategy=previous_metadata.get("Parser Strategy", "Generic"),
+                                        purchase_order_number=previous_metadata.get("PO Number")
+                                        or str(index_metadata.get("PO Number", "") or ""),
+                                        total_order_value=previous_metadata.get("Total Order Value")
+                                        or str(index_metadata.get("Total Order Value", "") or ""),
+                                        upload_type=upload_type,
+                                        uploaded_image_path=img_path,
+                                    )
+                                    st.success("Updated PostgreSQL order.")
+                                except Exception as error:
+                                    st.error(f"PostgreSQL update failed: {error}")
+                                    st.stop()
 
-                                count_ok, count_msg = sync_items_count_to_google_sheet(
-                                    target_date=selected_saved_date,
-                                    source_file=selected_saved_file,
-                                    client_name=client_name,
-                                    item_count=len(editable_df),
+                            if write_to_google_sheets:
+                                gsheet_ok, gsheet_msg = push_validated_items_to_google_sheet(
+                                    editable_df,
                                     secrets=st.secrets,
                                     gspread_module=gspread,
                                     credentials_cls=Credentials,
+                                    target_date=selected_saved_date,
+                                    source_file=selected_saved_file,
+                                    client_name=client_name,
+                                    replace_existing=True,
                                 )
-                                if count_ok:
-                                    st.info(count_msg)
-                                    invalidate_google_sheet_cache(validated=False, items_count=True)
+                                if gsheet_ok:
+                                    st.info(gsheet_msg)
+                                    invalidate_google_sheet_cache(validated=True, items_count=False)
+                                    if database_url:
+                                        delete_database_order(
+                                            database_url,
+                                            pd.Timestamp(selected_saved_date).date(),
+                                            selected_saved_file,
+                                        )
+                                    order_index_rows = filtered_index_df[
+                                        filtered_index_df["Source File"].astype(str).str.strip()
+                                        == selected_saved_file
+                                    ]
+                                    po_number = ""
+                                    total_value = ""
+                                    if not order_index_rows.empty:
+                                        po_number = str(order_index_rows.iloc[0].get("PO Number", "") or "")
+                                        total_value = str(order_index_rows.iloc[0].get("Total Order Value", "") or "")
+                                    count_ok, count_msg = sync_items_count_to_google_sheet(
+                                        target_date=selected_saved_date,
+                                        source_file=selected_saved_file,
+                                        client_name=client_name,
+                                        item_count=len(editable_df),
+                                        secrets=st.secrets,
+                                        gspread_module=gspread,
+                                        credentials_cls=Credentials,
+                                        purchase_order_number=po_number,
+                                        total_order_value=total_value,
+                                    )
+                                    if count_ok:
+                                        st.info(count_msg)
+                                        invalidate_google_sheet_cache(validated=False, items_count=True)
+                                    else:
+                                        st.warning(count_msg)
                                 else:
-                                    st.warning(count_msg)
-                            else:
-                                st.warning(gsheet_msg)
+                                    st.warning(gsheet_msg)
 
                             st.rerun()
                         else:
@@ -1503,31 +1628,43 @@ with tab_saved:
                         if rem_ok:
                             st.success(rem_msg)
 
-                            gsheet_rem_ok, gsheet_rem_msg = remove_validated_items_from_google_sheet(
-                                target_date=selected_saved_date,
-                                source_file=selected_saved_file,
-                                secrets=st.secrets,
-                                gspread_module=gspread,
-                                credentials_cls=Credentials,
-                            )
-                            if gsheet_rem_ok:
-                                st.info(gsheet_rem_msg)
-                                invalidate_google_sheet_cache(validated=True, items_count=False)
+                            write_to_google_sheets = st.session_state.get("push_gsheet_on_confirm", False)
+                            database_url = get_active_database_url() if not write_to_google_sheets else None
+                            if database_url:
+                                try:
+                                    delete_database_order(
+                                        database_url,
+                                        pd.Timestamp(selected_saved_date).date(),
+                                        selected_saved_file,
+                                    )
+                                except Exception as error:
+                                    st.warning(f"PostgreSQL delete failed: {error}")
 
-                                count_rem_ok, count_rem_msg = remove_items_count_from_google_sheet(
+                            if write_to_google_sheets:
+                                gsheet_rem_ok, gsheet_rem_msg = remove_validated_items_from_google_sheet(
                                     target_date=selected_saved_date,
                                     source_file=selected_saved_file,
                                     secrets=st.secrets,
                                     gspread_module=gspread,
                                     credentials_cls=Credentials,
                                 )
-                                if count_rem_ok:
-                                    st.info(count_rem_msg)
-                                    invalidate_google_sheet_cache(validated=False, items_count=True)
+                                if gsheet_rem_ok:
+                                    st.info(gsheet_rem_msg)
+                                    invalidate_google_sheet_cache(validated=True, items_count=False)
+                                    count_rem_ok, count_rem_msg = remove_items_count_from_google_sheet(
+                                        target_date=selected_saved_date,
+                                        source_file=selected_saved_file,
+                                        secrets=st.secrets,
+                                        gspread_module=gspread,
+                                        credentials_cls=Credentials,
+                                    )
+                                    if count_rem_ok:
+                                        st.info(count_rem_msg)
+                                        invalidate_google_sheet_cache(validated=False, items_count=True)
+                                    else:
+                                        st.warning(count_rem_msg)
                                 else:
-                                    st.warning(count_rem_msg)
-                            else:
-                                st.warning(gsheet_rem_msg)
+                                    st.warning(gsheet_rem_msg)
 
                             st.rerun()
                         else:
@@ -1602,7 +1739,7 @@ with tab_consolidated:
         help="Uses local CSV rows plus validated Google Sheet rows for consolidation.",
     )
 
-    csv_consolidated_dates = list_saved_dates()
+    csv_consolidated_dates = list_all_saved_dates()
     sheet_consolidated_dates = []
     if include_sheet_consolidated:
         sheet_consolidated_dates, _ = get_cached_google_sheet_dates()
@@ -1797,7 +1934,7 @@ with tab_challan:
         help="Uses local CSV rows plus validated Google Sheet rows for challan selection.",
     )
 
-    csv_challan_dates = list_saved_dates()
+    csv_challan_dates = list_all_saved_dates()
     sheet_challan_dates = []
     if include_sheet_challan:
         sheet_challan_dates, _ = get_cached_google_sheet_dates()
