@@ -1,6 +1,6 @@
 # ecomSenseAI
 
-Automated vegetable item and quantity extraction engine with dual operational interfaces: an interactive **Streamlit dashboard** for human-in-the-loop validation and a high-performance **FastAPI REST API** built for edge devices, mobile applications, and external integrations.
+Automated product item and quantity extraction engine with dual operational interfaces: an interactive **Streamlit dashboard** for human-in-the-loop validation and a high-performance **FastAPI REST API** built for edge devices, mobile applications, and external integrations.
 
 ---
 
@@ -22,7 +22,7 @@ flowchart TD
     end
 
     subgraph Core["Application & Domain Core"]
-        Detection["Vegetable Detection & Fuzzy Matcher"]
+        Detection["Product Item Detection & Fuzzy Matcher"]
         Parser["Parser Strategies (Generic / VIT / FVIT / MHS)"]
         OCR["OCR Pipeline (PaddleOCR + OpenCV + Tesseract)"]
         Reporting["Challan & Report Engine (XLSX / PDF)"]
@@ -70,13 +70,14 @@ flowchart TD
 
 The codebase enforces a clean separation of concerns:
 
-- **Domain Layer** ([domain/models.py](domain/models.py)): Core business entities such as `VegetableDetection`, confidence thresholds, and parsing domain rules.
+- **Domain Layer** ([domain/models.py](domain/models.py)): Core business entities for detected product items (`ProductDetection` / `VegetableDetection`), catalog contracts (`ProductCatalog`), confidence thresholds, and parsing domain rules.
 - **Application Layer**:
   - [application/extraction_service.py](application/extraction_service.py): Text parsing, regex patterns, PO number and order value extraction, fuzzy matching policies.
-  - [application/vegetable_detection_service.py](application/vegetable_detection_service.py): High-level document detection and scoring coordinator.
-  - [application/vegetable_catalog_service.py](application/vegetable_catalog_service.py): Catalog lookup, aliases, and Tamil translation mapping.
+  - [application/product_detection_service.py](application/product_detection_service.py): High-level document product item detection and scoring coordinator.
+  - [application/product_catalog_service.py](application/product_catalog_service.py): Product catalog lookup, aliases, and regional/Tamil translation mapping.
   - [application/reporting_service.py](application/reporting_service.py): Order consolidation, client-specific summaries, Excel exports, and PDF generation with WeasyPrint.
 - **Infrastructure Layer**:
+  - [infrastructure/product_catalog_repository.py](infrastructure/product_catalog_repository.py): Product and alias catalog loader ([data/products.json](data/products.json) and [data/aliases.json](data/aliases.json)).
   - [infrastructure/ocr_engine.py](infrastructure/ocr_engine.py): PaddleOCR, OpenCV preprocessing (grayscale, adaptive thresholding), and Tesseract fallback.
   - [infrastructure/document_readers.py](infrastructure/document_readers.py): PDF, Excel, and image file parsers.
   - [infrastructure/database.py](infrastructure/database.py): SQLAlchemy engine configuration, session management, and Supabase connection resolution.
@@ -111,7 +112,8 @@ uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 | Method | Endpoint | Description |
 |---|---|---|
 | `GET` | `/api/v1/health` | Service health status check. |
-| `POST` | `/api/v1/extract` | Multipart upload (PDF, image, Excel). Runs OCR/parsing and returns detected vegetable items with confidence ratings, PO number, and order total. |
+| `GET` | `/api/v1/health/database` | Database connectivity and schema reachability check (inspects tables and reports reachable status). |
+| `POST` | `/api/v1/extract` | Multipart upload (PDF, image, Excel). Runs OCR/parsing and returns detected product items with confidence ratings, PO number, and order total. |
 | `GET` | `/api/v1/orders` | Query saved orders for a given date (`?order_date=YYYY-MM-DD`). |
 | `POST` | `/api/v1/orders/confirm` | Confirms and saves an order to PostgreSQL with dual-write to the local CSV mirror. |
 | `GET` | `/api/v1/orders/individual/download` | Download individual order file as Excel (`.xlsx`) or PDF (`.pdf`). |
@@ -125,7 +127,7 @@ When invoking `POST /api/v1/extract`:
 - `file`: Document upload (PDF, PNG, JPG, WEBP, XLSX up to 20 MB).
 - `order_date`: Target date (`YYYY-MM-DD`).
 - `parser_strategy`: Parser profile (`Generic`, `VIT`, `FVIT`, or `MHS`).
-- `confidence_threshold`: Minimum name match confidence (default `75`).
+- `confidence_threshold`: Minimum product name match confidence (default `75`).
 - `auto_extract_threshold`: Auto-extract verification threshold (default `90`).
 
 ### Cloud Deployment (Render)
@@ -205,7 +207,7 @@ postgresql+psycopg://postgres.<project-ref>:<password>@aws-0-<region>.pooler.sup
 The Streamlit interface ([ecomSenseAI.py](ecomSenseAI.py)) serves as the administrative workspace:
 
 - **Primary Flow**: Upload document → Preview OCR text → Review auto-extracted vs flagged items (`Needs Review`) → Edit quantities / mappings → Confirm order.
-- **Confidence Tuning**: Interactive sliders for vegetable match confidence and auto-extract thresholds.
+- **Confidence Tuning**: Interactive sliders for product item match confidence and auto-extract thresholds.
 - **Saved Orders**: Reopen previously confirmed files by date, adjust rows, and re-save.
 - **Consolidation**: Live aggregated quantities summed across all files for any selected date with multi-format downloads (Excel, PDF).
 
@@ -221,7 +223,7 @@ streamlit run ecomSenseAI.py
 - **PaddleOCR**: Line-level text and bounding box detection for invoices and handwritten receipts.
 - **OpenCV Preprocessing**: Grayscale conversion, Otsu's adaptive thresholding, and contrast normalization.
 - **Tesseract Fallback**: Secondary engine when PaddleOCR is unavailable or fails.
-- **RapidFuzz Matching**: Fuzzy comparison against canonical vegetable records in [data/vegetables.json](data/vegetables.json) and client-specific aliases in [data/aliases.json](data/aliases.json).
+- **RapidFuzz Matching**: Fuzzy comparison against product catalog records in [data/products.json](data/products.json) and client-specific product aliases in [data/aliases.json](data/aliases.json).
 
 ### System Dependencies
 

@@ -13,6 +13,32 @@ class Base(DeclarativeBase):
 
 def resolve_database_url(secrets: Any = None) -> str | None:
     database_url = os.getenv("DATABASE_URL", "").strip()
+
+    # Support discrete environment variables (commonly set on Render / container platforms)
+    env_db_fields = ("DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD")
+    alt_env_db_fields = ("PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD")
+
+    if not database_url and all(os.getenv(k, "").strip() for k in env_db_fields):
+        database_url = URL.create(
+            "postgresql+psycopg",
+            username=os.getenv("DB_USER", "").strip(),
+            password=os.getenv("DB_PASSWORD", "").strip(),
+            host=os.getenv("DB_HOST", "").strip(),
+            port=int(os.getenv("DB_PORT", "5432").strip()),
+            database=os.getenv("DB_NAME", "").strip(),
+            query={"sslmode": os.getenv("DB_SSLMODE", "require").strip()},
+        ).render_as_string(hide_password=False)
+    elif not database_url and all(os.getenv(k, "").strip() for k in alt_env_db_fields):
+        database_url = URL.create(
+            "postgresql+psycopg",
+            username=os.getenv("PGUSER", "").strip(),
+            password=os.getenv("PGPASSWORD", "").strip(),
+            host=os.getenv("PGHOST", "").strip(),
+            port=int(os.getenv("PGPORT", "5432").strip()),
+            database=os.getenv("PGDATABASE", "").strip(),
+            query={"sslmode": os.getenv("PGSSLMODE", "require").strip()},
+        ).render_as_string(hide_password=False)
+
     if not database_url and secrets is not None:
         try:
             database_config = secrets.get("database", {})

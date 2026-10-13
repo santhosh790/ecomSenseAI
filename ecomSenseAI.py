@@ -16,9 +16,9 @@ logger = logging.getLogger(__name__)
 
 # Import application services with error handling
 try:
-    from application.vegetable_detection_service import detect_vegetables as detect_vegetables_service
-    from application.vegetable_detection_service import find_canonical_vegetable_name as find_canonical_vegetable_name_service
-    from application.vegetable_catalog_service import load_vegetable_catalog
+    from application.product_detection_service import detect_products as detect_vegetables_service
+    from application.product_detection_service import find_canonical_product_name as find_canonical_vegetable_name_service
+    from application.product_catalog_service import load_product_catalog as load_vegetable_catalog
     from application.reporting_service import consolidate, consolidate_with_client_columns, format_individual_order_summary, merge_saved_order_rows, export_excel, export_pdf, export_delivery_challan_excel, export_delivery_challan_pdf
     from application.extraction_service import extract_purchase_order_number
     from application.extraction_service import extract_total_order_value

@@ -17,6 +17,15 @@ class ExtractApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
 
+    def test_database_health(self):
+        response = self.client.get("/api/v1/health/database")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("connected", data)
+        self.assertIn("tables_reachable", data)
+        self.assertIn("tables", data)
+
     def test_swagger_docs_are_available_for_browser_testing(self):
         response = self.client.get("/docs")
 

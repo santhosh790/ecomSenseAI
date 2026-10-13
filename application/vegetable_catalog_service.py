@@ -1,8 +1,10 @@
-from functools import lru_cache
+"""Backward compatibility wrapper for application.product_catalog_service."""
+from application.product_catalog_service import (
+    load_product_catalog,
+    load_vegetable_catalog,
+)
 
-from infrastructure.vegetable_catalog_repository import load_vegetable_catalog as load_vegetable_catalog_from_repo
-
-
-@lru_cache(maxsize=1)
-def load_vegetable_catalog():
-    return load_vegetable_catalog_from_repo()
+__all__ = [
+    "load_product_catalog",
+    "load_vegetable_catalog",
+]

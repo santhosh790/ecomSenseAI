@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 
 @dataclass
-class VegetableDetection:
+class ProductDetection:
     source_name: str
     tamil_name: str
     quantity: str
@@ -20,8 +20,25 @@ class VegetableDetection:
         }
 
 
+# Backward-compatible alias
+VegetableDetection = ProductDetection
+
+
 @dataclass(frozen=True)
-class VegetableCatalog:
-    vegetable_tamil_map: dict[str, str]
-    vegetable_aliases: dict[str, str]
+class ProductCatalog:
+    product_tamil_map: dict[str, str]
+    product_aliases: dict[str, str]
     noise_line_patterns: list[str]
+
+    @property
+    def vegetable_tamil_map(self) -> dict[str, str]:
+        return self.product_tamil_map
+
+    @property
+    def vegetable_aliases(self) -> dict[str, str]:
+        return self.product_aliases
+
+
+# Backward-compatible alias
+VegetableCatalog = ProductCatalog
+

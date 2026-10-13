@@ -29,13 +29,13 @@ from application.reporting_service import (
     format_individual_order_summary,
     merge_saved_order_rows,
 )
-from application.vegetable_detection_service import detect_vegetables
+from application.product_detection_service import detect_products as detect_vegetables
 from infrastructure.document_readers import read_excel, read_image, read_pdf
 from infrastructure.google_sheets_service import (
     load_items_count_rows_from_google_sheet,
     load_validated_rows_from_google_sheet,
 )
-from infrastructure.database import resolve_database_url
+from infrastructure.database import get_engine, resolve_database_url
 from infrastructure.ocr_engine import extract_image_text, load_ocr_model
 from infrastructure.order_repository import (
     get_order_metadata,
@@ -131,16 +131,20 @@ if cors_origins:
 
 
 def _database_url() -> str | None:
+    # In FastAPI (Render / production / containers), database configuration comes from environment variables
     database_url = resolve_database_url()
     if database_url:
         return database_url
 
+    # Fallback to .streamlit/secrets.toml only for local development convenience if present
     secrets_path = Path(__file__).resolve().parent.parent / ".streamlit" / "secrets.toml"
-    try:
-        secrets = tomllib.loads(secrets_path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError):
-        return None
-    return resolve_database_url(secrets)
+    if secrets_path.exists():
+        try:
+            secrets = tomllib.loads(secrets_path.read_text(encoding="utf-8"))
+            return resolve_database_url(secrets)
+        except (OSError, tomllib.TOMLDecodeError):
+            pass
+    return None
 
 
 def _google_sheet_secrets() -> dict[str, Any] | None:
@@ -325,12 +329,58 @@ def root():
         "name": "ecomSenseAI API",
         "docs": "/docs",
         "health": "/api/v1/health",
+        "database_health": "/api/v1/health/database",
     }
 
 
 @app.get("/api/v1/health", tags=["status"])
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/v1/health/database", tags=["status"])
+def database_health():
+    database_url = _database_url()
+    if not database_url:
+        return {
+            "status": "error",
+            "connected": False,
+            "message": "Database is not configured. Set DATABASE_URL environment variable.",
+            "tables": [],
+        }
+
+    from sqlalchemy import inspect, text
+
+    try:
+        engine = get_engine(database_url)
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        inspector = inspect(engine)
+        tables = sorted(inspector.get_table_names())
+        expected_tables = ["orders", "order_items"]
+        missing_tables = [t for t in expected_tables if t not in tables]
+
+        return {
+            "status": "ok" if not missing_tables else "warning",
+            "connected": True,
+            "tables": tables,
+            "expected_tables": expected_tables,
+            "tables_reachable": len(tables) > 0 and not missing_tables,
+            "missing_tables": missing_tables,
+            "message": (
+                "Database connection successful and all tables are reachable."
+                if not missing_tables
+                else f"Database connected, but missing expected tables: {missing_tables}"
+            ),
+        }
+    except Exception as error:
+        return {
+            "status": "error",
+            "connected": False,
+            "tables": [],
+            "tables_reachable": False,
+            "message": f"Database connection failed: {error}",
+        }
 
 
 @app.post("/api/v1/extract", response_model=ExtractResponse, tags=["extraction"])
