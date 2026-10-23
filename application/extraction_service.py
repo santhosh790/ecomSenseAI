@@ -794,7 +794,7 @@ def extract_vit_row_fields(candidate_text):
     # VIT candidates have: serial, item_code, material, hsn, unit, qty, rate
     # Pattern: serial (2-3 digits), item_code (6-7 digits), material (text), hsn (6-8 digits), unit, qty, rate
     pattern = re.compile(
-        r"^\s*\d{2,3}\s+\d{6,7}\s+(?P<material>.+?)\s+\d{6,8}(?:_[A-Z])?\s+(?P<unit>KG|KGS|EA|NOS)\s+(?P<qty>\d+(?:\.\d+)?)(?:\s+\d+(?:\.\d+)?)?\s*$",
+        r"^\s*\d{2,3}\s+\d{6,7}\s+(?P<material>.+?)\s+(?:\d{6,8}(?:_[A-Z])?\s+)?(?P<unit>KG|KGS|EA|NOS)\s+(?P<qty>\d+(?:\.\d+)?)(?:\s+\d+(?:\.\d+)?)?\s*$",
         flags=re.IGNORECASE,
     )
     
@@ -875,7 +875,7 @@ def build_vit_row_candidates(lines):
     
     # Pattern for HSN + UOM + Quantity line (e.g., "07122000 KG 150.000")
     hsn_qty_line_pattern = re.compile(
-        r"^\s*(?P<hsn>\d{6,8}(?:_[A-Z])?)\s+(?P<uom>KG|KGS|EA|NOS)\s+(?P<qty>\d+(?:\.\d+)?)\s*$",
+        r"^\s*(?:(?P<hsn>\d{6,8}(?:_[A-Z])?)\s+)?(?P<uom>KG|KGS|EA|NOS)\s+(?P<qty>\d+(?:\.\d+)?)\s*$",
         flags=re.IGNORECASE,
     )
     
@@ -986,7 +986,7 @@ def build_vit_row_candidates(lines):
                 material = " ".join(material_parts)
                 material = clean_vit_description(material)
                 
-                hsn = hsn_match.group("hsn").replace("_", "")
+                hsn = (hsn_match.group("hsn") or "").replace("_", "")
                 unit = hsn_match.group("uom").upper()
                 if unit in ["KGS", "KG"]:
                     unit = "KG"

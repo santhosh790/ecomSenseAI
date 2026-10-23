@@ -95,3 +95,62 @@ results, report = detect_vegetables(
 print(f"\nExtracted {len(results)} items:")
 for item in results:
     print(f"  {item['Source Name']:20} | {item['Quantity']:15} | Conf: {item['Confidence']}%")
+
+
+def test_vit_missing_hsn_preserves_onion_and_neighboring_rows():
+    text = """90
+206605
+MINT
+LEAVES_UB_1X1
+KG
+07099990 KG 15.000
+32.00
+0
+0
+0
+480
+100
+206607
+ONION
+BIG_UB_1X1KG
+KG 50.000
+53.00
+0
+2,650
+110
+206610
+POTATO
+LARGE_UB_1X1
+KG
+07122000 KG 40.000
+21.00
+0
+0
+0
+840
+Gross Amount (INR):
+0.000
+7,788.00
+"""
+    candidates = build_vit_row_candidates(text.splitlines())
+    assert len(candidates) == 3
+    assert [extract_vit_row_fields(candidate) for candidate in candidates] == [
+        ("MINT LEAVES_UB_1X1", "15 KG"),
+        ("ONION BIG_UB_1X1KG", "50 KG"),
+        ("POTATO LARGE_UB_1X1", "40 KG"),
+    ]
+
+    extracted, details = detect_vegetables(
+        text=text,
+        vegetable_aliases=catalog.vegetable_aliases,
+        vegetable_tamil_map=catalog.vegetable_tamil_map,
+        noise_line_patterns=catalog.noise_line_patterns,
+        return_details=True,
+        client_name="VIT",
+    )
+    assert details["vit_mode_activated"] is True
+    assert {item["Source Name"]: item["Quantity"] for item in extracted} == {
+        "Mint": "15 KG",
+        "Onion": "50 KG",
+        "Potato": "40 KG",
+    }

@@ -73,3 +73,45 @@ else:
     print(f"\n⚠️  Expected 3 items with quantities, got {len(results)}")
 
 print("\n" + "=" * 80)
+
+
+def test_fvit_kovakkai_tindly_maps_to_tendli():
+    text = """17
+PAPAYA_KG
+08072000
+Kg
+250
+35.00
+0%
+8,750.00
+18
+KOVAKKAI (TINDLY)_KG
+070993
+Kg
+10
+35.00
+0%
+350.00
+19
+SPRING ONION_KG
+070970
+Kg
+3
+50.00
+0%
+150.00"""
+    extracted, details = detect_vegetables(
+        text=text,
+        vegetable_aliases=catalog.vegetable_aliases,
+        vegetable_tamil_map=catalog.vegetable_tamil_map,
+        noise_line_patterns=catalog.noise_line_patterns,
+        return_details=True,
+        client_name="FVIT",
+    )
+    actual = {item["Source Name"]: item["Quantity"] for item in extracted}
+    assert details["parser_strategy"] == "fvit-special"
+    assert actual == {
+        "Papaya": "250 KG",
+        "Tendli": "10 KG",
+        "Spring Onion": "3 KG",
+    }, actual
