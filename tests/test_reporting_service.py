@@ -1,8 +1,50 @@
 import unittest
+from pathlib import Path
 
 import pandas as pd
 
-from application.reporting_service import consolidate, merge_saved_order_rows
+from application.reporting_service import consolidate, export_pdf, merge_saved_order_rows
+
+
+class OrderPdfFontTests(unittest.TestCase):
+    def test_tamil_font_is_embedded_in_individual_and_consolidated_reports(self):
+        import fitz
+        from fontTools.ttLib import TTFont
+
+        tamil_name = "தக்காளி வெங்காயம் கொத்தமல்லி"
+        font_path = Path(__file__).resolve().parent.parent / "assets" / "fonts" / "NotoSansTamil-Regular.ttf"
+        with TTFont(font_path) as font:
+            self.assertTrue(
+                {ord(character) for character in tamil_name if not character.isspace()}
+                .issubset(font.getBestCmap())
+            )
+        for client_columns in ({}, {"Campus Kitchen": 2}):
+            with self.subTest(client_columns=client_columns):
+                rows = pd.DataFrame([
+                    {
+                        "Tamil Name": tamil_name,
+                        "Total Quantity": 2,
+                        "Unit": "KG",
+                        **client_columns,
+                    }
+                ])
+                content = export_pdf(rows, client_name="வாடிக்கையாளர்")
+
+                with fitz.open(stream=content, filetype="pdf") as document:
+                    tamil_fonts = {
+                        font[0]
+                        for page in document
+                        for font in page.get_fonts()
+                        if "TamilFont" in font[3]
+                    }
+                    self.assertTrue(tamil_fonts, "Bundled Tamil font was not embedded")
+                    for font_id in tamil_fonts:
+                        embedded_font = document.extract_font(font_id)[3]
+                        self.assertTrue(embedded_font)
+                    for page in document:
+                        for span in page.get_texttrace():
+                            for character in span["chars"]:
+                                self.assertNotEqual(character[1], 0, "PDF contains a missing glyph")
 
 
 class SavedOrderMergeTests(unittest.TestCase):

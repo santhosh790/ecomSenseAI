@@ -413,6 +413,13 @@ def export_pdf(
 ):
     _configure_macos_weasyprint_loader_paths()
     from weasyprint import HTML
+    from weasyprint.text.fonts import FontConfiguration
+
+    tamil_font_uri = (
+        Path(__file__).resolve().parent.parent
+        / "assets" / "fonts" / "NotoSansTamil-Regular.ttf"
+    ).as_uri()
+    font_config = FontConfiguration()
 
     # Extract date from dataframe if available, otherwise use today
     if "Date" in df.columns and not df.empty:
@@ -493,13 +500,14 @@ def export_pdf(
 <style>
   @font-face {{
     font-family: 'TamilFont';
-        src: local('Azhagi'), local('AzhagiFont'), local('Noto Sans Tamil'), local('Lohit Tamil'), local('Tamil Sangam MN'), local('Tamil MN');
+        src: url('{tamil_font_uri}') format('truetype');
+        font-weight: 100 900;
   }}
   @page {{
     margin: 10mm 12mm;
   }}
   body {{
-        font-family: 'Azhagi', 'AzhagiFont', 'Noto Sans Tamil', 'Lohit Tamil', 'Tamil Sangam MN', 'Tamil MN', serif;
+        font-family: 'TamilFont', sans-serif;
     margin: 0;
     padding: 0;
     color: #111;
@@ -627,7 +635,7 @@ def export_pdf(
 </html>"""
 
     output = io.BytesIO()
-    HTML(string=html_content).write_pdf(output)
+    HTML(string=html_content).write_pdf(output, font_config=font_config)
     return output.getvalue()
 
 
