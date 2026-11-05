@@ -399,6 +399,15 @@ def export_excel(
     return output.getvalue()
 
 
+_TAMIL_OR_NUMBER_RUN = re.compile(r"[\u0B80-\u0BFF]+|[0-9]+(?:[.,][0-9]+)*")
+
+
+def _emphasize_tamil_and_digits(value):
+    """Escape text for HTML and bold Tamil and number runs; English stays normal."""
+    text = escape(str(value or ""), quote=False)
+    return _TAMIL_OR_NUMBER_RUN.sub(lambda m: f"<b>{m.group(0)}</b>", text)
+
+
 def export_pdf(
     df,
     logo_data_uri="",
@@ -415,10 +424,9 @@ def export_pdf(
     from weasyprint import HTML
     from weasyprint.text.fonts import FontConfiguration
 
-    tamil_font_uri = (
-        Path(__file__).resolve().parent.parent
-        / "assets" / "fonts" / "NotoSansTamil-Regular.ttf"
-    ).as_uri()
+    fonts_dir = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+    tamil_font_uri = (fonts_dir / "NotoSansTamil-Regular.ttf").as_uri()
+    tamil_bold_font_uri = (fonts_dir / "NotoSansTamil-Bold.ttf").as_uri()
     font_config = FontConfiguration()
 
     # Extract date from dataframe if available, otherwise use today
@@ -438,8 +446,8 @@ def export_pdf(
             date_str = date_obj.strftime("%d-%m-%Y")
         except:
             pass
-    client_text = escape(str(client_name or "").strip())
-    purchase_order_text = escape(str(purchase_order_number or "").strip())
+    client_text = str(client_name or "").strip()
+    purchase_order_text = str(purchase_order_number or "").strip()
     
     # Preserve original extraction order (no sorting)
     df_sorted = df.copy()
@@ -472,19 +480,21 @@ def export_pdf(
                 value_text = f"{value_num:.0f}" if value_num == int(value_num) else f"{value_num:.2f}"
             except (ValueError, TypeError):
                 value_text = str(value)
-            client_cells += f'<td class="num">{value_text}</td>'
+            client_cells += f'<td class="num">{_emphasize_tamil_and_digits(value_text)}</td>'
 
         rows_html += (
             f'<tr style="background:{bg}">'
-            f"<td>{i}</td>"
-            f"<td><b>{tamil}</b></td>"
+            f"<td>{_emphasize_tamil_and_digits(i)}</td>"
+            f"<td>{_emphasize_tamil_and_digits(tamil)}</td>"
             f"{client_cells}"
-            f'<td class="num"><b>{qty_str}</b></td>'
-            f'<td class="num"><b>{unit}</b></td>'
+            f'<td class="num">{_emphasize_tamil_and_digits(qty_str)}</td>'
+            f'<td class="num">{_emphasize_tamil_and_digits(unit)}</td>'
             "</tr>"
         )
 
-    client_header_html = "".join([f'<th class="num">{col}</th>' for col in client_cols])
+    client_header_html = "".join(
+        [f'<th class="num">{_emphasize_tamil_and_digits(col)}</th>' for col in client_cols]
+    )
     footer_summary = str(order_totals_summary or "").strip() or f"மொத்தம் {len(df)} பொருட்கள்"
     if not str(order_totals_summary or "").strip() and client_text:
         footer_summary = f"{footer_summary} | வாடிக்கையாளர்: {client_text}"
@@ -501,10 +511,22 @@ def export_pdf(
   @font-face {{
     font-family: 'TamilFont';
         src: url('{tamil_font_uri}') format('truetype');
-        font-weight: 100 900;
+        font-weight: 400;
+  }}
+  @font-face {{
+    font-family: 'TamilFontBold';
+        src: url('{tamil_bold_font_uri}') format('truetype');
+        font-weight: 700;
   }}
   @page {{
     margin: 10mm 12mm;
+  }}
+  * {{
+    font-weight: normal !important;
+  }}
+  b {{
+    font-family: 'TamilFontBold', 'TamilFont', sans-serif;
+    font-weight: bold !important;
   }}
   body {{
         font-family: 'TamilFont', sans-serif;
@@ -601,23 +623,23 @@ def export_pdf(
         <div class=\"header-left\">
             {logo_html}
             <div class=\"header-text\">
-                <div class=\"company-name\">{str(header_text or '')}</div>
-                <div class=\"subtitle\">காய்கறி பட்டியல்</div>
+                <div class=\"company-name\">{_emphasize_tamil_and_digits(header_text)}</div>
+                <div class=\"subtitle\"><b>காய்கறி பட்டியல்</b></div>
             </div>
         </div>
         <div class=\"header-right\">
-            {'<div><b>வாடிக்கையாளர்:</b> ' + client_text + ('    |    <b>PO Number:</b> ' + purchase_order_text if purchase_order_text else '') + '</div>' if client_text else ('<div><b>PO Number:</b> ' + purchase_order_text + '</div>' if purchase_order_text else '')}
-            <div><b>தேதி:</b> {date_str}</div>
+            {'<div><b>வாடிக்கையாளர்:</b> ' + _emphasize_tamil_and_digits(client_text) + ('    |    PO Number: ' + _emphasize_tamil_and_digits(purchase_order_text) if purchase_order_text else '') + '</div>' if client_text else ('<div>PO Number: ' + _emphasize_tamil_and_digits(purchase_order_text) + '</div>' if purchase_order_text else '')}
+            <div><b>தேதி:</b> {_emphasize_tamil_and_digits(date_str)}</div>
         </div>
     </div>
     <table>
     <thead>
       <tr>
         <th>#</th>
-        <th>காய்கறி பெயர்</th>
+        <th><b>காய்கறி பெயர்</b></th>
         {client_header_html}
-        <th class=\"num\">அளவு</th>
-        <th class=\"num\">அலகு</th>
+        <th class=\"num\"><b>அளவு</b></th>
+        <th class=\"num\"><b>அலகு</b></th>
       </tr>
     </thead>
     <tbody>
@@ -625,12 +647,12 @@ def export_pdf(
     </tbody>
     <tfoot>
       <tr>
-                                <td colspan=\"5\">{footer_summary}</td>
+                                <td colspan=\"5\">{_emphasize_tamil_and_digits(footer_summary)}</td>
                 <td class=\"num\" colspan=\"{len(client_cols) + 2}\"></td>
       </tr>
     </tfoot>
   </table>
-    <div class=\"footer-note\">{str(footer_text or '')}</div>
+    <div class=\"footer-note\">{_emphasize_tamil_and_digits(footer_text)}</div>
 </body>
 </html>"""
 
@@ -1067,15 +1089,32 @@ def export_delivery_challan_pdf(
         
         rows_html += f'''
         <tr style="background: {bg};">
-            <td style="text-align: center;">{idx}</td>
-            <td><b>{item_display}</b></td>
-            <td style="text-align: right;">{qty_display}</td>
-            <td style="text-align: center;">{unit}</td>
+            <td style="text-align: center;">{_emphasize_tamil_and_digits(idx)}</td>
+            <td>{_emphasize_tamil_and_digits(item_display)}</td>
+            <td style="text-align: right;">{_emphasize_tamil_and_digits(qty_display)}</td>
+            <td style="text-align: center;">{_emphasize_tamil_and_digits(unit)}</td>
         </tr>
         '''
 
     # Total row
-    total_display = f"{total_quantity:.1f}"
+    total_display = _emphasize_tamil_and_digits(f"{total_quantity:.1f}")
+
+    company_name = _emphasize_tamil_and_digits(company_name)
+    company_address = _emphasize_tamil_and_digits(company_address)
+    phone = _emphasize_tamil_and_digits(phone)
+    email = _emphasize_tamil_and_digits(email)
+    invoice_no = _emphasize_tamil_and_digits(invoice_no)
+    invoice_date = _emphasize_tamil_and_digits(invoice_date)
+    po_date = _emphasize_tamil_and_digits(po_date)
+    po_delivery_date = _emphasize_tamil_and_digits(po_delivery_date)
+    vehicle_number = _emphasize_tamil_and_digits(vehicle_number)
+    dl_no = _emphasize_tamil_and_digits(dl_no)
+    bill_to_name = _emphasize_tamil_and_digits(bill_to_name)
+    bill_to_address = _emphasize_tamil_and_digits(bill_to_address)
+    ship_to_name = _emphasize_tamil_and_digits(ship_to_name)
+    ship_to_address = _emphasize_tamil_and_digits(ship_to_address)
+    payment_mode = _emphasize_tamil_and_digits(payment_mode)
+    invoice_amount = _emphasize_tamil_and_digits(invoice_amount)
     
     logo_html = f'<img src="{logo_data_uri}" style="height: 50px;" />' if logo_data_uri else ""
 
@@ -1084,6 +1123,12 @@ def export_delivery_challan_pdf(
 <head>
     <meta charset="UTF-8">
     <style>
+        * {{
+            font-weight: normal !important;
+        }}
+        b {{
+            font-weight: bold !important;
+        }}
         @page {{
             size: A4;
             margin: 15mm;
