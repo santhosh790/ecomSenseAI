@@ -446,6 +446,36 @@ def list_orders(order_date: date = Query(...)):
     return {"order_date": order_date, "orders": orders}
 
 
+@app.get("/api/v1/orderitem", tags=["orders"])
+def get_order_items(
+    order_date: date = Query(...),
+    source_file: str = Query(...),
+):
+    source_file = source_file.strip()
+    if not source_file:
+        raise HTTPException(status_code=422, detail="source_file is required.")
+
+    rows = _order_rows(order_date, source_file)
+    if rows.empty:
+        raise HTTPException(status_code=404, detail="No saved rows found for this order.")
+
+    metadata = _order_metadata(order_date, source_file)
+    client_name = ""
+    if "Client Name" in rows.columns:
+        client_name = str(rows["Client Name"].iloc[0] or "").strip()
+
+    items = rows.fillna("").to_dict(orient="records")
+    return {
+        "order_date": order_date,
+        "source_file": source_file,
+        "client_name": client_name,
+        "purchase_order_number": metadata["PO Number"],
+        "total_order_value": metadata["Total Order Value"],
+        "item_count": len(items),
+        "items": items,
+    }
+
+
 @app.post("/api/v1/orders/confirm", response_model=ConfirmOrderResponse, tags=["orders"])
 def confirm_order(request: ConfirmOrderRequest):
     source_file = request.source_file.strip()
